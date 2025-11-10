@@ -136,7 +136,7 @@ class ModelOptQuantizeUNet:
             print(f"  Architecture: {model_info['architecture']}")
             print(f"  Parameters: {model_info['param_count_billions']:.2f}B ({model_info['param_count']:,})")
             print(f"  Y dimension: {model_info['y_dim']} ({model_info.get('y_dim_source', 'not detected')})")
-            print(f"  Context dimension: {model_info['context_dim']}")
+            print(f"  Context dimension: {model_info['context_dim']} ({model_info.get('context_dim_source', 'default')})")
             print(f"  Latent format: {model_info['latent_channels']}x{model_info['latent_spatial']}x{model_info['latent_spatial']}")
             print(f"  Has y parameter: {model_info['has_y_param']}")
 
@@ -156,26 +156,54 @@ class ModelOptQuantizeUNet:
                 print(f"Skipping layers: {skip_layer_list}")
 
             # Select quantization config
-            # Use ModelOpt's default configs as base and customize for diffusion models
+            # Use diffusion-specific configs (based on NVIDIA's official examples)
+            # These are different from LLM configs - they use simple wildcards
+            # Source: NVIDIA/TensorRT-Model-Optimizer/examples/diffusers/quantization/
             print(f"\nPreparing quantization config for diffusion model...")
 
             import copy
 
             if precision == "int8":
-                # Start with INT8_DEFAULT_CFG and customize
-                quant_cfg = copy.deepcopy(mtq.INT8_DEFAULT_CFG)
-                # Disable output quantization for better quality
-                quant_cfg["quant_cfg"]["*output_quantizer"] = {"enable": False}
+                # Diffusion-specific INT8 config
+                quant_cfg = {
+                    "quant_cfg": {
+                        "*weight_quantizer": {"num_bits": 8, "axis": 0},
+                        "*input_quantizer": {"num_bits": 8, "axis": 0},
+                        "*output_quantizer": {"enable": False},
+                        "default": {"enable": False},
+                    },
+                    "algorithm": "max",
+                }
             elif precision == "fp8":
-                # Start with FP8_DEFAULT_CFG and customize
-                quant_cfg = copy.deepcopy(mtq.FP8_DEFAULT_CFG)
-                # Disable output quantization for better quality
-                quant_cfg["quant_cfg"]["*output_quantizer"] = {"enable": False}
+                # Diffusion-specific FP8 config
+                quant_cfg = {
+                    "quant_cfg": {
+                        "*weight_quantizer": {"num_bits": (4, 3), "axis": None},
+                        "*input_quantizer": {"num_bits": (4, 3), "axis": None},
+                        "*output_quantizer": {"enable": False},
+                        "*[qkv]_bmm_quantizer": {"num_bits": (4, 3), "axis": None},
+                        "*softmax_quantizer": {"num_bits": (4, 3), "axis": None},
+                        "default": {"enable": False},
+                    },
+                    "algorithm": "max",
+                }
             elif precision == "int4":
-                # Start with INT4_AWQ_CFG and customize
-                quant_cfg = copy.deepcopy(mtq.INT4_AWQ_CFG)
-                # Disable output quantization
-                quant_cfg["quant_cfg"]["*output_quantizer"] = {"enable": False}
+                # Try using the default INT4_AWQ_CFG as fallback
+                # This is experimental for diffusion models
+                try:
+                    quant_cfg = copy.deepcopy(mtq.INT4_AWQ_CFG)
+                    quant_cfg["quant_cfg"]["*output_quantizer"] = {"enable": False}
+                except AttributeError:
+                    # If INT4_AWQ_CFG doesn't exist, create a basic config
+                    quant_cfg = {
+                        "quant_cfg": {
+                            "*weight_quantizer": {"num_bits": 4, "axis": 0},
+                            "*input_quantizer": {"num_bits": 8, "axis": 0},
+                            "*output_quantizer": {"enable": False},
+                            "default": {"enable": False},
+                        },
+                        "algorithm": "max",
+                    }
             else:
                 raise ValueError(f"Unsupported precision: {precision}")
 

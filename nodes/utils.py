@@ -378,12 +378,48 @@ def introspect_diffusion_model(model):
             info["y_dim_source"] = y_dim_candidates[0][0]
             info["has_y_param"] = True
 
-    # Detect context dimension
+    # Detect context dimension from cross-attention layers
+    # This is more reliable than looking for a context_dim attribute
+    context_dim_detected = False
+
     if hasattr(model, 'context_dim'):
         info["context_dim"] = model.context_dim
-    elif hasattr(model, 'transformer_depth'):
-        # Might be a transformer-based model
-        info["context_dim"] = 768  # Common default
+        context_dim_detected = True
+    else:
+        # Search for cross-attention layers to detect context dimension
+        # Look for modules that process context embeddings (text conditioning)
+        for name, module in model.named_modules():
+            # Look for cross-attention projection layers
+            # Common patterns: "attn2", "cross_attn", "context_attn"
+            if any(pattern in name.lower() for pattern in ['attn2', 'cross', 'context_k', 'context_q']):
+                # Found a potential cross-attention layer
+                # Check if it has linear projection layers
+                if isinstance(module, torch.nn.Linear):
+                    # The context projection should have in_features = context_dim
+                    # Common values: 768 (SD1.5), 2048 (SDXL), 4096 (SD3)
+                    if module.in_features in [768, 1024, 2048, 4096]:
+                        info["context_dim"] = module.in_features
+                        info["context_dim_source"] = f"detected_from_{name}"
+                        context_dim_detected = True
+                        break
+
+        # If still not found, try looking at any attention module
+        if not context_dim_detected:
+            for name, module in model.named_modules():
+                # Look for any module with "to_k" or "to_q" in cross-attention
+                if 'to_k' in name.lower() or 'to_q' in name.lower():
+                    if isinstance(module, torch.nn.Linear):
+                        # Cross-attention K/Q projections take context as input
+                        if module.in_features in [768, 1024, 2048, 4096]:
+                            info["context_dim"] = module.in_features
+                            info["context_dim_source"] = f"detected_from_{name}"
+                            context_dim_detected = True
+                            break
+
+    # Last resort: keep default if nothing found
+    if not context_dim_detected:
+        info["context_dim"] = 768  # Common default for SD models
+        info["context_dim_source"] = "default_fallback"
 
     # Detect model channels (base channel count)
     if hasattr(model, 'model_channels'):
