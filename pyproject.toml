@@ -63,6 +63,7 @@ display_name = "NVIDIA ModelOpt"
 description = "Quantize and optimize diffusion models with NVIDIA ModelOpt (INT8/FP8/INT4)"
 author = "enragedantelope"
 version = "0.2.2"
+version = "0.2.1"
 node_list = [
     "ModelOptUNetLoader",
     "ModelOptQuantizeUNet",
