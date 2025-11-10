@@ -15,6 +15,7 @@ from .utils import (
     get_gpu_info,
     check_precision_compatibility,
     format_bytes,
+    introspect_diffusion_model,
 )
 
 
@@ -129,6 +130,15 @@ class ModelOptQuantizeUNet:
             base_model = model.model
             diffusion_model = base_model.diffusion_model
 
+            # Introspect model to detect architecture details
+            print(f"\nIntrospecting model architecture...")
+            model_info = introspect_diffusion_model(diffusion_model)
+            print(f"  Architecture: {model_info['architecture']}")
+            print(f"  Y dimension: {model_info['y_dim']} ({model_info.get('y_dim_source', 'not detected')})")
+            print(f"  Context dimension: {model_info['context_dim']}")
+            print(f"  Latent format: {model_info['latent_channels']}x{model_info['latent_spatial']}x{model_info['latent_spatial']}")
+            print(f"  Has y parameter: {model_info['has_y_param']}")
+
             # Parse skip layers
             skip_layer_list = []
             if skip_layers:
@@ -136,39 +146,31 @@ class ModelOptQuantizeUNet:
                 print(f"Skipping layers: {skip_layer_list}")
 
             # Select quantization config
-            # NOTE: Default configs (INT8_DEFAULT_CFG, FP8_DEFAULT_CFG) are for LLMs
-            # Diffusion models (UNet CNNs) need custom configs
+            # Use ModelOpt's default configs as base and customize for diffusion models
             print(f"\nPreparing quantization config for diffusion model...")
 
+            import copy
+
             if precision == "int8":
-                quant_cfg = {
-                    "quant_cfg": {
-                        "*weight_quantizer": {"num_bits": 8, "axis": 0},
-                        "*input_quantizer": {"num_bits": 8, "axis": None},
-                        "*output_quantizer": {"enable": False},  # Disable output quantization
-                    },
-                    "algorithm": "max",
-                }
+                # Start with INT8_DEFAULT_CFG and customize
+                quant_cfg = copy.deepcopy(mtq.INT8_DEFAULT_CFG)
+                # Disable output quantization for better quality
+                quant_cfg["quant_cfg"]["*output_quantizer"] = {"enable": False}
             elif precision == "fp8":
-                quant_cfg = {
-                    "quant_cfg": {
-                        "*weight_quantizer": {"num_bits": (4, 3), "axis": None},
-                        "*input_quantizer": {"num_bits": (4, 3), "axis": None},
-                        "*output_quantizer": {"enable": False},  # Disable output quantization
-                    },
-                    "algorithm": "max",
-                }
+                # Start with FP8_DEFAULT_CFG and customize
+                quant_cfg = copy.deepcopy(mtq.FP8_DEFAULT_CFG)
+                # Disable output quantization for better quality
+                quant_cfg["quant_cfg"]["*output_quantizer"] = {"enable": False}
             elif precision == "int4":
-                quant_cfg = {
-                    "quant_cfg": {
-                        "*weight_quantizer": {"num_bits": 4, "axis": 0},
-                        "*input_quantizer": {"num_bits": 8, "axis": None},  # Keep activations at INT8
-                        "*output_quantizer": {"enable": False},
-                    },
-                    "algorithm": "awq_lite",
-                }
+                # Start with INT4_AWQ_CFG and customize
+                quant_cfg = copy.deepcopy(mtq.INT4_AWQ_CFG)
+                # Disable output quantization
+                quant_cfg["quant_cfg"]["*output_quantizer"] = {"enable": False}
             else:
                 raise ValueError(f"Unsupported precision: {precision}")
+
+            print(f"  Using base config: {precision.upper()}")
+            print(f"  Algorithm: {quant_cfg.get('algorithm', 'default')}")
 
             # Customize config to skip certain layers if specified
             if skip_layer_list:
@@ -221,10 +223,14 @@ class ModelOptQuantizeUNet:
             if calibration_data is not None:
                 # Use provided calibration latents
                 calib_latents = calibration_data["samples"]
+                print(f"  Using provided calibration data: {calib_latents.shape}")
             else:
-                # Generate random calibration data
-                # Determine latent shape based on model type
-                latent_shape = self._get_latent_shape(base_model)
+                # Generate random calibration data using introspected latent format
+                latent_shape = (
+                    model_info['latent_channels'],
+                    model_info['latent_spatial'],
+                    model_info['latent_spatial']
+                )
                 calib_latents = torch.randn(
                     calibration_steps,
                     *latent_shape,
@@ -240,18 +246,10 @@ class ModelOptQuantizeUNet:
                 # Get model dtype
                 model_dtype = next(diffusion_model_to_calibrate.parameters()).dtype
 
-                # Debug: Detect y dimension once before loop
-                y_dim_detected = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
-                if y_dim_detected is None:
-                    y_dim_detected = getattr(diffusion_model_to_calibrate, 'y_dim', None)
-                if y_dim_detected is None and hasattr(diffusion_model_to_calibrate, 'label_emb'):
-                    if hasattr(diffusion_model_to_calibrate.label_emb, 'in_features'):
-                        y_dim_detected = diffusion_model_to_calibrate.label_emb.in_features
-                    elif hasattr(diffusion_model_to_calibrate.label_emb, '0'):
-                        first_layer = diffusion_model_to_calibrate.label_emb[0]
-                        if hasattr(first_layer, 'in_features'):
-                            y_dim_detected = first_layer.in_features
-                print(f"Debug: Detected y_dim = {y_dim_detected}")
+                # Use introspected model info for calibration
+                print(f"  Using introspected architecture: {model_info['architecture']}")
+                if model_info['has_y_param']:
+                    print(f"  Y dimension: {model_info['y_dim']} (from {model_info.get('y_dim_source', 'detection')})")
 
                 with torch.no_grad():
                     for i in range(min(calibration_steps, len(calib_latents))):
@@ -268,53 +266,36 @@ class ModelOptQuantizeUNet:
                         # Timestep as tensor for diffusion models
                         timestep = torch.tensor([999.0], device=device, dtype=model_dtype)
 
-                        # Context dimensions vary by model
-                        # Try to detect appropriate context size
-                        context_dim = getattr(diffusion_model_to_calibrate, 'context_dim', 768)
+                        # Use introspected context dimension
+                        context_dim = model_info['context_dim']
                         context = torch.randn(1, 77, context_dim, device=device, dtype=model_dtype)
 
-                        # SDXL and some models need 'y' parameter (pooled text embeddings)
-                        # Create dummy pooled embeddings (adm in SDXL parlance)
-                        y_dim = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
-                        if y_dim is None:
-                            # Try alternative attribute names
-                            y_dim = getattr(diffusion_model_to_calibrate, 'y_dim', None)
-                        if y_dim is None:
-                            # Try to infer from label_emb or time_embed layers
-                            if hasattr(diffusion_model_to_calibrate, 'label_emb'):
-                                # Check the input dimension of label_emb
-                                if hasattr(diffusion_model_to_calibrate.label_emb, 'in_features'):
-                                    y_dim = diffusion_model_to_calibrate.label_emb.in_features
-                                elif hasattr(diffusion_model_to_calibrate.label_emb, '0'):
-                                    # Sequential module
-                                    first_layer = diffusion_model_to_calibrate.label_emb[0]
-                                    if hasattr(first_layer, 'in_features'):
-                                        y_dim = first_layer.in_features
-                        if y_dim is None:
-                            # Default to common SDXL size
-                            y_dim = 1280
-
-                        y = torch.randn(1, y_dim, device=device, dtype=model_dtype)
-
-                        # Forward pass - try different signatures
+                        # Forward pass - use introspected model info
                         try:
-                            # Try with y parameter first (SDXL, SD3)
-                            _ = diffusion_model_to_calibrate(latent, timestep, context, y=y)
-                        except TypeError as e:
-                            if "unexpected keyword argument 'y'" in str(e):
-                                # Model doesn't use y, try without it (SD1.5)
-                                try:
-                                    _ = diffusion_model_to_calibrate(latent, timestep, context)
-                                except Exception as e2:
-                                    print(f"  Warning: Calibration step {i} failed: {e2}")
+                            if model_info['has_y_param'] and model_info['y_dim'] is not None:
+                                # Model uses y parameter (SDXL, SD3)
+                                y = torch.randn(1, model_info['y_dim'], device=device, dtype=model_dtype)
+                                _ = diffusion_model_to_calibrate(latent, timestep, context, y=y)
                             else:
-                                # Some other error, try alternative signatures
-                                try:
-                                    _ = diffusion_model_to_calibrate(x=latent, timesteps=timestep, context=context, y=y)
-                                except Exception as e3:
-                                    print(f"  Warning: Calibration step {i} failed: {e3}")
+                                # Model doesn't use y parameter (SD1.5)
+                                _ = diffusion_model_to_calibrate(latent, timestep, context)
                         except Exception as e:
-                            print(f"  Warning: Calibration step {i} failed: {e}")
+                            # If forward pass fails, print warning but continue
+                            if i == 0:  # Only print detailed error for first step
+                                print(f"  Warning: Calibration step {i} failed: {e}")
+                                print(f"  Trying alternative signatures...")
+                                # Try alternative signatures
+                                try:
+                                    if model_info['has_y_param']:
+                                        y = torch.randn(1, model_info['y_dim'], device=device, dtype=model_dtype)
+                                        _ = diffusion_model_to_calibrate(x=latent, timesteps=timestep, context=context, y=y)
+                                    else:
+                                        _ = diffusion_model_to_calibrate(x=latent, timesteps=timestep, context=context)
+                                except Exception as e2:
+                                    print(f"  All calibration signatures failed: {e2}")
+                            else:
+                                # For subsequent steps, just note failure without spam
+                                pass
 
                 print(f"  Calibration complete!")
 
