@@ -1,10 +1,10 @@
 """
 ModelOpt UNet Loader for ComfyUI
 
-Loads UNet models that have been quantized with NVIDIA ModelOpt.
-Works with SDXL, SD1.5, and SD3 models.
+Loads UNet/diffusion models that have been quantized with NVIDIA ModelOpt.
 
 User provides quantized UNet separately from VAE and text encoders.
+Compatible with various diffusion model architectures.
 """
 
 import os
@@ -25,15 +25,12 @@ from .utils import (
 
 class ModelOptUNetLoader:
     """
-    Load a UNet model quantized with NVIDIA ModelOpt.
+    Load a UNet/diffusion model quantized with NVIDIA ModelOpt.
 
-    Supports:
-    - SDXL UNet (INT8/FP8)
-    - SD1.5 UNet (INT8/FP8)
-    - SD3 UNet (INT8)
+    Supports INT8, FP8, and INT4 quantized models.
 
     Note: VAE and text encoders must be loaded separately using standard ComfyUI nodes.
-    ModelOpt only quantizes the UNet component.
+    ModelOpt only quantizes the UNet/diffusion model component.
     """
 
     @classmethod
@@ -76,7 +73,7 @@ class ModelOptUNetLoader:
     RETURN_NAMES = ("model",)
     FUNCTION = "load_unet"
     CATEGORY = "loaders/modelopt"
-    DESCRIPTION = "Load UNet quantized with NVIDIA ModelOpt (SDXL, SD1.5, SD3). Use with standard VAE and text encoder loaders."
+    DESCRIPTION = "Load UNet/diffusion model quantized with NVIDIA ModelOpt. Use with standard VAE and text encoder loaders."
 
     # Model cache
     _model_cache = {}

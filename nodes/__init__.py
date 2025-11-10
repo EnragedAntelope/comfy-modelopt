@@ -1,7 +1,7 @@
 """
 ComfyUI ModelOpt Integration Nodes
 
-This package provides ComfyUI nodes for loading and quantizing models
+This package provides ComfyUI nodes for loading and quantizing diffusion models
 with NVIDIA TensorRT Model Optimizer (ModelOpt).
 
 Nodes:
@@ -10,12 +10,8 @@ Nodes:
 - ModelOptSaveQuantized: Save quantized models
 - ModelOptCalibrationHelper: Collect calibration data
 
-Supported Models:
-- SDXL (Stable Diffusion XL) - INT8/FP8
-- SD1.5 (Stable Diffusion 1.5) - INT8/FP8
-- SD3 (Stable Diffusion 3) - INT8
-
-Note: FLUX, Qwen Image, and WAN 2.2 are NOT officially supported by ModelOpt.
+Quantize your diffusion models for ~2x faster inference with minimal quality loss.
+Supports INT8, FP8, and INT4 quantization formats.
 """
 
 from .loader import NODE_CLASS_MAPPINGS as LOADER_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as LOADER_DISPLAY

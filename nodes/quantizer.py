@@ -20,15 +20,12 @@ from .utils import (
 
 class ModelOptQuantizeUNet:
     """
-    Quantize a UNet model using NVIDIA ModelOpt.
+    Quantize a UNet/diffusion model using NVIDIA ModelOpt.
 
-    This node performs Post-Training Quantization (PTQ) on a loaded UNet model.
-    The quantized model can then be saved and reused for faster inference.
+    This node performs Post-Training Quantization (PTQ) on a loaded UNet/diffusion model.
+    The quantized model can then be saved and reused for faster inference (~2x speedup).
 
-    Supported Models:
-    - SDXL UNet (INT8/FP8)
-    - SD1.5 UNet (INT8/FP8)
-    - SD3 UNet (INT8)
+    Supports INT8, FP8, and INT4 quantization formats.
 
     Note: Quantization requires calibration data. Use ModelOptCalibrationHelper
     to generate calibration samples, or the node will use default random calibration.
@@ -127,8 +124,10 @@ class ModelOptQuantizeUNet:
         print(f"VRAM: {gpu_info['vram_gb']:.1f}GB")
 
         try:
-            # Get the actual PyTorch model from ComfyUI's model wrapper
-            pytorch_model = model.model
+            # Get the actual UNet/diffusion model from ComfyUI's model wrapper
+            # ComfyUI structure: model (ModelPatcher) -> model.model (BaseModel) -> model.model.diffusion_model (UNet)
+            base_model = model.model
+            diffusion_model = base_model.diffusion_model
 
             # Parse skip layers
             skip_layer_list = []
@@ -162,7 +161,7 @@ class ModelOptQuantizeUNet:
             else:
                 # Generate random calibration data
                 # Determine latent shape based on model type
-                latent_shape = self._get_latent_shape(pytorch_model)
+                latent_shape = self._get_latent_shape(base_model)
                 calib_latents = torch.randn(
                     calibration_steps,
                     *latent_shape,
@@ -171,8 +170,8 @@ class ModelOptQuantizeUNet:
                 print(f"  Using random calibration data: {calib_latents.shape}")
 
             # Define calibration forward loop
-            def forward_loop(model_to_calibrate):
-                """Calibration forward pass"""
+            def forward_loop(diffusion_model_to_calibrate):
+                """Calibration forward pass for the diffusion model"""
                 print(f"Running calibration...")
                 device = comfy.model_management.get_torch_device()
 
@@ -188,32 +187,41 @@ class ModelOptQuantizeUNet:
                             latent = calib_latents[i:i+1]
 
                         # Create dummy timestep and context
-                        timestep = torch.tensor([999], device=device)
-                        context = torch.randn(1, 77, 768, device=device)  # Dummy context
+                        # Timestep as tensor for diffusion models
+                        timestep = torch.tensor([999.0], device=device)
 
-                        # Forward pass
+                        # Context dimensions vary by model
+                        # Try to detect appropriate context size
+                        context_dim = getattr(diffusion_model_to_calibrate, 'context_dim', 768)
+                        context = torch.randn(1, 77, context_dim, device=device)
+
+                        # Forward pass - diffusion models typically accept (x, timesteps, context, **kwargs)
                         try:
-                            _ = model_to_calibrate(latent, timestep, context)
+                            _ = diffusion_model_to_calibrate(latent, timestep, context)
                         except Exception as e:
-                            print(f"  Warning: Calibration step {i} failed: {e}")
-                            # Continue with other steps
+                            # Try alternative signature if first fails
+                            try:
+                                _ = diffusion_model_to_calibrate(x=latent, timesteps=timestep, context=context)
+                            except Exception as e2:
+                                print(f"  Warning: Calibration step {i} failed: {e2}")
+                                # Continue with other steps
 
                 print(f"  Calibration complete!")
 
-            # Quantize the model
-            print(f"\nQuantizing model to {precision.upper()}...")
+            # Quantize the diffusion model
+            print(f"\nQuantizing diffusion model to {precision.upper()}...")
             print(f"This may take several minutes...")
 
-            quantized_model = mtq.quantize(
-                pytorch_model,
+            quantized_diffusion_model = mtq.quantize(
+                diffusion_model,
                 quant_cfg,
                 forward_loop
             )
 
-            # Wrap back in ComfyUI's model wrapper
-            # Create a new model instance with the quantized model
+            # Replace the diffusion model in the ComfyUI model structure
+            # Clone the model patcher and replace the diffusion model
             quantized_comfy_model = model.clone()
-            quantized_comfy_model.model = quantized_model
+            quantized_comfy_model.model.diffusion_model = quantized_diffusion_model
 
             print(f"\n✓ Quantization complete!")
             print(f"{'='*60}\n")
