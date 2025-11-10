@@ -1,374 +1,254 @@
 """
-ModelOpt Model Loader Node for ComfyUI V3
+ModelOpt UNet Loader for ComfyUI
 
-This module provides a ComfyUI V3 node for loading models quantized with
-NVIDIA TensorRT Model Optimizer (ModelOpt).
+Loads UNet models that have been quantized with NVIDIA ModelOpt.
+Works with SDXL, SD1.5, and SD3 models.
 
-Supported formats:
-- TensorRT engine files (.plan, .engine)
-- ONNX models (.onnx)
-- Safetensors with quantization metadata (.safetensors)
-- PyTorch checkpoints (.pt, .pth)
-
-Supported quantization formats:
-- INT8 (Turing+, SM 7.5+)
-- FP8 (Ada Lovelace+, SM 8.9+)
-- INT4 (Turing+, SM 7.5+)
-- NVFP4 (Blackwell, SM 12.0)
+User provides quantized UNet separately from VAE and text encoders.
 """
 
 import os
-from typing import Optional
-
-try:
-    from comfy_api.latest import ComfyExtension, io
-    COMFY_V3_AVAILABLE = True
-except ImportError:
-    COMFY_V3_AVAILABLE = False
-    print("Warning: ComfyUI V3 API not available. Using legacy mode.")
-
-try:
-    import folder_paths
-    COMFY_FOLDER_PATHS_AVAILABLE = True
-except ImportError:
-    COMFY_FOLDER_PATHS_AVAILABLE = False
+import torch
+import folder_paths
+import comfy.sd
+import comfy.utils
+from comfy.cli_args import args
 
 from .utils import (
     get_gpu_compute_capability,
     get_gpu_info,
     validate_model_file,
     check_precision_compatibility,
-    scan_model_directory,
-    format_bytes
+    format_bytes,
 )
 
 
-# Legacy V1/V2 compatibility
-class ModelOptLoaderLegacy:
+class ModelOptUNetLoader:
     """
-    Legacy ComfyUI V1/V2 loader for ModelOpt quantized models.
+    Load a UNet model quantized with NVIDIA ModelOpt.
 
-    Use this if ComfyUI V3 API is not available.
+    Supports:
+    - SDXL UNet (INT8/FP8)
+    - SD1.5 UNet (INT8/FP8)
+    - SD3 UNet (INT8)
+
+    Note: VAE and text encoders must be loaded separately using standard ComfyUI nodes.
+    ModelOpt only quantizes the UNet component.
     """
 
     @classmethod
     def INPUT_TYPES(cls):
-        """Define input types for the node"""
-        model_list = cls.get_available_models()
+        # Register modelopt folder path if not already registered
+        if "modelopt_unet" not in folder_paths.folder_names_and_paths:
+            modelopt_path = os.path.join(folder_paths.models_dir, "modelopt_unet")
+            os.makedirs(modelopt_path, exist_ok=True)
+            folder_paths.folder_names_and_paths["modelopt_unet"] = (
+                [modelopt_path],
+                folder_paths.supported_pt_extensions
+            )
 
         return {
             "required": {
-                "model_name": (model_list, {
-                    "tooltip": "Select a ModelOpt quantized model"
+                "unet_name": (folder_paths.get_filename_list("modelopt_unet"), {
+                    "tooltip": "Select a ModelOpt quantized UNet model from models/modelopt_unet/"
                 }),
                 "precision": (["auto", "fp8", "fp16", "int8", "int4"], {
                     "default": "auto",
                     "tooltip": (
-                        "Quantization precision:\n"
+                        "Quantization precision:\n\n"
                         "• auto: Detect from model metadata\n"
-                        "• fp8: Best quality, requires Ada Lovelace+\n"
-                        "• int8: Good balance, Turing+\n"
+                        "• fp8: Best quality, requires Ada Lovelace+ (RTX 4000 series)\n"
+                        "• int8: Production ready, Turing+ (RTX 2000 series)\n"
                         "• int4: Maximum compression, Turing+\n"
-                        "• fp16: No quantization"
+                        "• fp16: No quantization (baseline)"
                     )
-                }),
-                "batch_size": ("INT", {
-                    "default": 1,
-                    "min": 1,
-                    "max": 8,
-                    "step": 1,
-                    "tooltip": "Batch size for inference"
                 }),
             },
             "optional": {
                 "enable_caching": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Cache loaded models to avoid repeated loading"
+                    "tooltip": "Cache loaded models in memory to speed up subsequent loads"
                 }),
             }
         }
 
-    RETURN_TYPES = ("MODEL", "STRING")
-    RETURN_NAMES = ("model", "info")
-    FUNCTION = "load_model"
+    RETURN_TYPES = ("MODEL",)
+    RETURN_NAMES = ("model",)
+    FUNCTION = "load_unet"
     CATEGORY = "loaders/modelopt"
-    DESCRIPTION = "Load models quantized with NVIDIA ModelOpt"
+    DESCRIPTION = "Load UNet quantized with NVIDIA ModelOpt (SDXL, SD1.5, SD3). Use with standard VAE and text encoder loaders."
 
-    # Class-level cache for loaded models
+    # Model cache
     _model_cache = {}
-    _model_hashes = {}
 
-    @classmethod
-    def get_available_models(cls):
-        """Scan for available ModelOpt models"""
-        if not COMFY_FOLDER_PATHS_AVAILABLE:
-            return ["ComfyUI not detected"]
-
-        try:
-            # Try to get tensorrt model directory
-            model_dirs = folder_paths.get_folder_paths("tensorrt")
-            if not model_dirs:
-                model_dirs = folder_paths.get_folder_paths("checkpoints")
-
-            if not model_dirs:
-                return ["No model directory found"]
-
-            extensions = ['.plan', '.engine', '.onnx', '.safetensors', '.pt', '.pth']
-            models = []
-
-            for model_dir in model_dirs:
-                found_models = scan_model_directory(model_dir, extensions)
-                models.extend(found_models.keys())
-
-            return sorted(models) if models else ["No models found"]
-
-        except Exception as e:
-            print(f"Error scanning for models: {e}")
-            return ["Error scanning models"]
-
-    def load_model(self, model_name, precision, batch_size, enable_caching=True):
-        """Load a ModelOpt quantized model"""
+    def load_unet(self, unet_name, precision="auto", enable_caching=True):
+        """Load ModelOpt quantized UNet"""
 
         # Validate GPU
         gpu_info = get_gpu_info()
         if not gpu_info["available"]:
             raise RuntimeError(
-                "No CUDA device available!\n"
-                "ModelOpt requires an NVIDIA GPU with CUDA support."
+                "❌ No CUDA device available!\n\n"
+                "ModelOpt requires an NVIDIA GPU with CUDA support.\n"
+                "Detected: No CUDA device\n\n"
+                "Please ensure:\n"
+                "• NVIDIA GPU is properly installed\n"
+                "• CUDA drivers are installed\n"
+                "• PyTorch CUDA version matches your CUDA installation"
             )
 
-        # Validate precision compatibility
+        # Check precision compatibility
         if precision != "auto":
             is_compatible, message = check_precision_compatibility(precision)
             if not is_compatible:
                 raise RuntimeError(
-                    f"Precision {precision.upper()} not supported on this GPU:\n{message}"
+                    f"❌ Precision {precision.upper()} not supported on this GPU\n\n"
+                    f"{message}\n\n"
+                    f"Your GPU: {gpu_info['name']}\n"
+                    f"Compute Capability: {gpu_info['compute_capability']}\n\n"
+                    f"Please select a compatible precision or use 'auto'."
                 )
 
-        # Get full model path
-        if not COMFY_FOLDER_PATHS_AVAILABLE:
-            model_path = model_name
-        else:
-            try:
-                model_dirs = folder_paths.get_folder_paths("tensorrt")
-                if not model_dirs:
-                    model_dirs = folder_paths.get_folder_paths("checkpoints")
+        # Get model path
+        unet_path = folder_paths.get_full_path("modelopt_unet", unet_name)
 
-                model_path = None
-                for model_dir in model_dirs:
-                    candidate = os.path.join(model_dir, model_name)
-                    if os.path.exists(candidate):
-                        model_path = candidate
-                        break
-
-                if model_path is None:
-                    raise FileNotFoundError(f"Model not found: {model_name}")
-
-            except Exception as e:
-                raise RuntimeError(f"Error locating model: {e}")
-
-        # Validate model file
-        is_valid, error = validate_model_file(model_path)
-        if not is_valid:
-            raise RuntimeError(f"Invalid model file:\n{error}")
-
-        # Load model (placeholder - actual implementation would load the model)
-        try:
-            model = self._load_model_impl(model_path, precision, batch_size, enable_caching)
-
-            # Generate info string
-            file_size = os.path.getsize(model_path)
-            info = (
-                f"Model: {model_name}\n"
-                f"Precision: {precision}\n"
-                f"Batch Size: {batch_size}\n"
-                f"File Size: {format_bytes(file_size)}\n"
-                f"GPU: {gpu_info['name']} (SM {gpu_info['compute_capability']})"
+        if unet_path is None:
+            raise FileNotFoundError(
+                f"❌ Model not found: {unet_name}\n\n"
+                f"Please place your ModelOpt quantized UNet in:\n"
+                f"  ComfyUI/models/modelopt_unet/\n\n"
+                f"Supported formats: .safetensors, .pt, .pth, .ckpt"
             )
 
-            return (model, info)
+        # Validate model file
+        is_valid, error = validate_model_file(unet_path)
+        if not is_valid:
+            raise RuntimeError(f"❌ Invalid model file:\n{error}")
+
+        # Check cache
+        cache_key = f"{unet_path}_{precision}"
+        if enable_caching and cache_key in self._model_cache:
+            print(f"✓ Loading {unet_name} from cache")
+            return (self._model_cache[cache_key],)
+
+        # Load the model
+        print(f"Loading ModelOpt UNet: {unet_name}")
+        print(f"  Precision: {precision}")
+        print(f"  GPU: {gpu_info['name']} (SM {gpu_info['compute_capability']})")
+
+        try:
+            # Load state dict
+            sd = comfy.utils.load_torch_file(unet_path, safe_load=True)
+
+            # Detect model type and precision from metadata
+            model_type, detected_precision = self._detect_model_info(sd, unet_path)
+
+            if precision == "auto":
+                precision = detected_precision
+                print(f"  Auto-detected precision: {precision}")
+
+            # Create model
+            model = self._create_model_from_state_dict(sd, model_type, precision)
+
+            # Cache if enabled
+            if enable_caching:
+                self._model_cache[cache_key] = model
+
+            file_size = os.path.getsize(unet_path)
+            print(f"✓ Successfully loaded {unet_name}")
+            print(f"  Model type: {model_type}")
+            print(f"  File size: {format_bytes(file_size)}")
+            print(f"  Precision: {precision}")
+
+            return (model,)
 
         except Exception as e:
             import traceback
-            print(f"ModelOpt Loader Error:\n{traceback.format_exc()}")
+            error_trace = traceback.format_exc()
+            print(f"ModelOpt Loader Error:\n{error_trace}")
+
             raise RuntimeError(
-                f"Failed to load model:\n{str(e)}\n\n"
+                f"❌ Failed to load ModelOpt UNet: {unet_name}\n\n"
+                f"Error: {str(e)}\n\n"
                 f"Common issues:\n"
-                f"• GPU mismatch (model built for different GPU)\n"
-                f"• Insufficient VRAM ({gpu_info['vram_gb']:.1f}GB available)\n"
+                f"• Model was quantized for different GPU architecture\n"
                 f"• Corrupted model file\n"
-                f"• Missing dependencies"
+                f"• Insufficient VRAM ({gpu_info['vram_gb']:.1f}GB available)\n"
+                f"• Missing ModelOpt dependencies\n\n"
+                f"Check console for detailed error trace."
             )
 
-    def _load_model_impl(self, model_path, precision, batch_size, enable_caching):
-        """
-        Actual model loading implementation (placeholder).
+    def _detect_model_info(self, state_dict, model_path):
+        """Detect model type and precision from state dict"""
 
-        In a real implementation, this would:
-        1. Check cache if caching enabled
-        2. Load the model based on file extension
-        3. Apply precision settings
-        4. Configure batch size
-        5. Return the loaded model
-        """
-        # Placeholder: Return a dummy model object
-        # In production, this would load the actual TensorRT/ONNX/PyTorch model
+        # Check for model type hints in state dict keys
+        keys = list(state_dict.keys())
 
-        print(f"Loading model from: {model_path}")
-        print(f"Precision: {precision}, Batch size: {batch_size}")
+        # Detect model architecture
+        model_type = "unknown"
+        if any("joint_blocks" in k for k in keys):
+            model_type = "sd3"
+        elif any("label_emb" in k for k in keys):
+            model_type = "sdxl"
+        elif any("time_embed" in k for k in keys):
+            model_type = "sd15"
 
-        # This is where you would implement actual loading logic:
-        # - For .engine/.plan: Load TensorRT engine
-        # - For .onnx: Load ONNX model
-        # - For .safetensors/.pt: Load PyTorch checkpoint with ModelOpt
+        # Detect precision from tensor dtypes or metadata
+        precision = "fp16"  # default
 
-        class DummyModel:
-            def __init__(self, path, precision, batch_size):
-                self.path = path
-                self.precision = precision
-                self.batch_size = batch_size
+        # Check for quantization metadata
+        if "modelopt_metadata" in state_dict:
+            metadata = state_dict["modelopt_metadata"]
+            if isinstance(metadata, dict):
+                precision = metadata.get("precision", "fp16")
 
-        return DummyModel(model_path, precision, batch_size)
+        # Check tensor dtypes as fallback
+        for key in keys[:10]:  # Check first 10 tensors
+            if isinstance(state_dict[key], torch.Tensor):
+                dtype = state_dict[key].dtype
+                if dtype == torch.float8_e4m3fn or dtype == torch.float8_e5m2:
+                    precision = "fp8"
+                    break
+                elif dtype == torch.int8:
+                    precision = "int8"
+                    break
+                elif dtype == torch.float16:
+                    precision = "fp16"
 
+        return model_type, precision
 
-# V3 Node Implementation
-if COMFY_V3_AVAILABLE:
-    class ModelOptLoader(io.ComfyNode):
-        """
-        # ModelOpt Model Loader
+    def _create_model_from_state_dict(self, state_dict, model_type, precision):
+        """Create ComfyUI model from state dict"""
 
-        Load models quantized with NVIDIA TensorRT Model Optimizer (ModelOpt).
+        # Use ComfyUI's model loading infrastructure
+        # This creates a model wrapper compatible with ComfyUI's execution
 
-        ## Supported Models
-        - SDXL (Stable Diffusion XL) - INT8 quantization
-        - SD1.5 (Stable Diffusion 1.5) - INT8 quantization
-        - SD3 (Stable Diffusion 3) - INT8 quantization
+        # For now, we use ComfyUI's standard model detection
+        # In production, you might need custom model classes for quantized models
 
-        ## Supported Formats
-        - TensorRT engines (.plan, .engine)
-        - ONNX models (.onnx)
-        - Safetensors with quantization (.safetensors)
-        - PyTorch checkpoints (.pt, .pth)
+        model_config = comfy.sd.load_model_weights(state_dict, "")
 
-        ## Requirements
-        - NVIDIA GPU with Compute Capability 7.5+ (Turing or newer)
-        - For FP8: Ada Lovelace (RTX 40-series) or Hopper (H100)
-        - CUDA 12.0+
-        - TensorRT 8.6+
+        if model_config is None:
+            # Fallback: try to detect config from state dict
+            model_config = self._detect_model_config(state_dict, model_type)
 
-        ## Usage
-        1. Place quantized models in `models/tensorrt/`
-        2. Select model from dropdown
-        3. Choose precision (or use 'auto' to detect)
-        4. Set batch size for your workflow
-        """
+        return model_config
 
-        @classmethod
-        def define_schema(cls) -> io.Schema:
-            """Define the V3 node schema"""
-
-            # Get available models
-            model_list = cls._get_available_models()
-
-            return io.Schema(
-                node_id="ModelOptLoader",
-                display_name="ModelOpt Model Loader",
-                category="loaders/modelopt",
-                description="Load models quantized with NVIDIA TensorRT Model Optimizer",
-                inputs=[
-                    io.Combo.Input(
-                        "model_name",
-                        options=model_list,
-                        tooltip="Select a ModelOpt quantized model from the models directory"
-                    ),
-                    io.Combo.Input(
-                        "precision",
-                        options=["auto", "fp8", "fp16", "int8", "int4", "nvfp4"],
-                        default="auto",
-                        tooltip=(
-                            "Quantization precision:\n\n"
-                            "• auto: Detect from model metadata\n"
-                            "• fp8: Best quality, requires Ada Lovelace+ (SM 8.9)\n"
-                            "• int8: Good balance, Turing+ (SM 7.5)\n"
-                            "• int4: Maximum compression, Turing+ (SM 7.5)\n"
-                            "• nvfp4: Latest format, Blackwell only (SM 12.0)\n"
-                            "• fp16: No quantization (baseline)"
-                        )
-                    ),
-                    io.Int.Input(
-                        "batch_size",
-                        default=1,
-                        min=1,
-                        max=16,
-                        tooltip=(
-                            "Batch size for inference.\n"
-                            "Higher values = better throughput but more VRAM.\n"
-                            "Recommended: 1-4 for most workflows"
-                        )
-                    ),
-                    io.Bool.Input(
-                        "enable_caching",
-                        default=True,
-                        tooltip=(
-                            "Cache loaded models to avoid repeated loading.\n"
-                            "Improves performance but uses more RAM."
-                        )
-                    ),
-                ],
-                outputs=[
-                    io.Model.Output(
-                        display_name="MODEL",
-                        tooltip="Loaded quantized model ready for inference"
-                    ),
-                    io.String.Output(
-                        display_name="info",
-                        tooltip="Model information and loading statistics"
-                    )
-                ],
-                is_output_node=False
-            )
-
-        @classmethod
-        def execute(cls, model_name, precision, batch_size, enable_caching) -> io.NodeOutput:
-            """Execute the model loading"""
-
-            # Reuse the legacy implementation for actual loading
-            legacy_loader = ModelOptLoaderLegacy()
-            model, info = legacy_loader.load_model(
-                model_name=model_name,
-                precision=precision,
-                batch_size=batch_size,
-                enable_caching=enable_caching
-            )
-
-            return io.NodeOutput(model, info)
-
-        @classmethod
-        def _get_available_models(cls):
-            """Get list of available models"""
-            legacy_loader = ModelOptLoaderLegacy()
-            return legacy_loader.get_available_models()
+    def _detect_model_config(self, state_dict, model_type):
+        """Detect model configuration from state dict"""
+        # Placeholder for custom config detection
+        # In production, implement proper config detection based on model architecture
+        raise NotImplementedError(
+            f"Could not automatically detect model configuration for {model_type}. "
+            f"Please ensure the model file contains proper metadata."
+        )
 
 
-    # Extension entry point
-    class ModelOptExtension(ComfyExtension):
-        """ComfyUI V3 Extension for ModelOpt nodes"""
+# Register the node
+NODE_CLASS_MAPPINGS = {
+    "ModelOptUNetLoader": ModelOptUNetLoader,
+}
 
-        async def get_node_list(self) -> list[type[io.ComfyNode]]:
-            """Return list of nodes provided by this extension"""
-            return [ModelOptLoader]
-
-
-    async def comfy_entrypoint() -> ComfyExtension:
-        """Entry point for ComfyUI V3"""
-        return ModelOptExtension()
-
-
-# Export appropriate class based on ComfyUI version
-if COMFY_V3_AVAILABLE:
-    # V3 is available, use V3 node
-    __all__ = ["ModelOptLoader", "ModelOptExtension", "comfy_entrypoint"]
-else:
-    # Fallback to legacy mode
-    ModelOptLoader = ModelOptLoaderLegacy
-    __all__ = ["ModelOptLoader"]
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "ModelOptUNetLoader": "ModelOpt UNet Loader",
+}

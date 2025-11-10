@@ -1,0 +1,9 @@
+# Windows-specific requirements
+# Install this after requirements.txt for Windows systems
+
+# Triton for Windows (experimental, for accelerated quantization)
+# triton-windows>=2.0.0
+
+# Note: As of 2025, triton-windows is experimental
+# ModelOpt will work without it, just slower for quantization
+# ONNX Runtime is recommended for Windows deployment
