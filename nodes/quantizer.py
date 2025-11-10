@@ -108,6 +108,9 @@ class ModelOptQuantizeUNet:
         # Check ModelOpt availability
         try:
             import modelopt.torch.quantization as mtq
+            import modelopt
+            modelopt_version = getattr(modelopt, '__version__', 'unknown')
+            print(f"Debug: ModelOpt version: {modelopt_version}")
         except ImportError:
             raise ImportError(
                 "❌ NVIDIA ModelOpt not installed!\n\n"
@@ -238,6 +241,14 @@ class ModelOptQuantizeUNet:
             conv_count = sum(1 for m in diffusion_model.modules() if isinstance(m, torch.nn.Conv2d))
             print(f"Debug: Linear layers: {linear_count}, Conv2d layers: {conv_count}")
 
+            # Debug: Print sample layer names to verify wildcard matching
+            print(f"Debug: Sample layer names:")
+            sample_count = 0
+            for name, module in diffusion_model.named_modules():
+                if isinstance(module, (torch.nn.Linear, torch.nn.Conv2d)) and sample_count < 10:
+                    print(f"  - {name} ({type(module).__name__})")
+                    sample_count += 1
+
             # CRITICAL: Ensure model is fully on GPU and in eval mode for ModelOpt
             device = comfy.model_management.get_torch_device()
             print(f"Debug: Moving model to {device} and setting eval mode...")
@@ -345,6 +356,9 @@ class ModelOptQuantizeUNet:
                 print(f"  Calibration complete!")
 
             print(f"\nRunning ModelOpt quantization...")
+            print(f"Debug: About to call mtq.quantize() with config:")
+            print(f"  Config type: {type(quant_cfg)}")
+            print(f"  Config: {quant_cfg}")
 
             quantized_diffusion_model = mtq.quantize(
                 diffusion_model,
@@ -355,6 +369,22 @@ class ModelOptQuantizeUNet:
             # Print quantization summary to verify quantizers were inserted
             print(f"\nQuantization Summary:")
             mtq.print_quant_summary(quantized_diffusion_model)
+
+            # Debug: Check if quantizers were actually added
+            from modelopt.torch.quantization.nn import TensorQuantizer
+            quantizer_count = sum(1 for m in quantized_diffusion_model.modules() if isinstance(m, TensorQuantizer))
+            print(f"Debug: Found {quantizer_count} TensorQuantizer modules in quantized model")
+
+            # Debug: Print sample of quantized layer names
+            if quantizer_count > 0:
+                print(f"Debug: Sample quantized layers:")
+                count = 0
+                for name, module in quantized_diffusion_model.named_modules():
+                    if isinstance(module, TensorQuantizer) and count < 5:
+                        print(f"  - {name}")
+                        count += 1
+            else:
+                print(f"Debug: WARNING - No quantizers found! Config may not be matching layer names.")
 
             # Replace the diffusion model in the ComfyUI model structure
             # Clone the model patcher and replace the diffusion model
