@@ -847,23 +847,8 @@ class ModelOptSaveQuantized:
                     "tooltip": "Quantized model to save (from ModelOptQuantizeUNet)"
                 }),
                 "filename": ("STRING", {
-                    "default": "quantized_unet.safetensors",
+                    "default": "quantized_unet.pt",
                     "tooltip": "Filename for the saved model (will be saved in models/modelopt_unet/)"
-                }),
-                "save_format": (["safetensors", "pytorch"], {
-                    "default": "safetensors",
-                    "tooltip": (
-                        "File format:\n"
-                        "• safetensors: Recommended, safer and faster\n"
-                        "• pytorch: Standard .pt format"
-                    )
-                }),
-            },
-            "optional": {
-                "metadata": ("STRING", {
-                    "default": "",
-                    "multiline": True,
-                    "tooltip": "Optional metadata to save with the model (JSON format)"
                 }),
             }
         }
@@ -874,49 +859,62 @@ class ModelOptSaveQuantized:
     CATEGORY = "modelopt"
     DESCRIPTION = "Save ModelOpt quantized model to disk"
 
-    def save_model(self, model, filename, save_format="safetensors", metadata=""):
-        """Save the quantized model"""
+    def save_model(self, model, filename):
+        """Save the quantized model using ModelOpt's save function"""
+
+        # Import ModelOpt
+        try:
+            import modelopt.torch.opt as mto
+        except ImportError:
+            raise RuntimeError(
+                "❌ ModelOpt not installed!\n\n"
+                "Please install: pip install nvidia-modelopt"
+            )
 
         # Ensure modelopt_unet directory exists
         save_dir = os.path.join(folder_paths.models_dir, "modelopt_unet")
         os.makedirs(save_dir, exist_ok=True)
 
-        # Add extension if not present
-        if save_format == "safetensors" and not filename.endswith(".safetensors"):
-            filename = filename + ".safetensors"
-        elif save_format == "pytorch" and not filename.endswith((".pt", ".pth")):
+        # Ensure .pt extension
+        if not filename.endswith((".pt", ".pth")):
             filename = filename + ".pt"
 
         save_path = os.path.join(save_dir, filename)
 
-        print(f"\nSaving quantized model...")
-        print(f"  Path: {save_path}")
-        print(f"  Format: {save_format}")
+        print(f"\n{'='*60}")
+        print(f"Saving Quantized Model with ModelOpt")
+        print(f"{'='*60}")
+        print(f"  Output: {save_path}")
+        print(f"  Format: PyTorch with ModelOpt state")
 
         try:
-            # Get state dict from model
-            state_dict = model.model.state_dict()
+            # Extract the quantized diffusion model from ComfyUI's model wrapper
+            # ComfyUI structure: model (ModelPatcher) -> model.model (BaseModel) -> model.model.diffusion_model (UNet)
+            diffusion_model = model.model.diffusion_model
 
-            # Add metadata if provided
-            if metadata:
-                try:
-                    import json
-                    metadata_dict = json.loads(metadata)
-                    state_dict["modelopt_metadata"] = metadata_dict
-                except json.JSONDecodeError:
-                    print(f"  Warning: Invalid metadata JSON, skipping")
+            # Verify this is a quantized model
+            from modelopt.torch.quantization.nn import TensorQuantizer
+            quantizer_count = sum(1 for m in diffusion_model.modules() if isinstance(m, TensorQuantizer))
 
-            # Save based on format
-            if save_format == "safetensors":
-                from safetensors.torch import save_file
-                save_file(state_dict, save_path)
+            if quantizer_count == 0:
+                print(f"  ⚠️  Warning: No quantizers found in model!")
+                print(f"  This model may not be quantized. Saving anyway...")
             else:
-                torch.save(state_dict, save_path)
+                print(f"  Quantizers found: {quantizer_count}")
+
+            # Save with ModelOpt - preserves both weights AND quantizer infrastructure
+            print(f"\n  Saving with mto.save()...")
+            mto.save(diffusion_model, save_path)
 
             file_size = os.path.getsize(save_path)
-            print(f"✓ Model saved successfully!")
+            print(f"\n✓ Model saved successfully!")
             print(f"  Size: {format_bytes(file_size)}")
-            print(f"  Location: models/modelopt_unet/{filename}\n")
+            print(f"  Location: models/modelopt_unet/{filename}")
+            print(f"\n  ℹ️  To load this model:")
+            print(f"     1. Load the ORIGINAL unquantized model")
+            print(f"     2. Use ModelOptUNetLoader with both inputs")
+            print(f"     3. Loader will restore quantized state into base model")
+            print(f"{'='*60}\n")
 
             return {}
 
@@ -927,6 +925,7 @@ class ModelOptSaveQuantized:
                 f"❌ Failed to save model!\n\n"
                 f"Error: {str(e)}\n\n"
                 f"Please check:\n"
+                f"• Model is properly quantized\n"
                 f"• Write permissions for {save_dir}\n"
                 f"• Sufficient disk space\n"
                 f"• Valid filename"

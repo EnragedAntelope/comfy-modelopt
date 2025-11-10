@@ -46,19 +46,11 @@ class ModelOptUNetLoader:
 
         return {
             "required": {
+                "base_model": ("MODEL", {
+                    "tooltip": "Original unquantized model (same architecture as the quantized model)"
+                }),
                 "unet_name": (folder_paths.get_filename_list("modelopt_unet"), {
                     "tooltip": "Select a ModelOpt quantized UNet model from models/modelopt_unet/"
-                }),
-                "precision": (["auto", "fp8", "fp16", "int8", "int4"], {
-                    "default": "auto",
-                    "tooltip": (
-                        "Quantization precision:\n\n"
-                        "• auto: Detect from model metadata\n"
-                        "• fp8: Best quality, requires Ada Lovelace+ (RTX 4000 series)\n"
-                        "• int8: Production ready, Turing+ (RTX 2000 series)\n"
-                        "• int4: Maximum compression, Turing+\n"
-                        "• fp16: No quantization (baseline)"
-                    )
                 }),
             },
             "optional": {
@@ -70,41 +62,33 @@ class ModelOptUNetLoader:
         }
 
     RETURN_TYPES = ("MODEL",)
-    RETURN_NAMES = ("model",)
+    RETURN_NAMES = ("quantized_model",)
     FUNCTION = "load_unet"
     CATEGORY = "loaders/modelopt"
-    DESCRIPTION = "Load UNet/diffusion model quantized with NVIDIA ModelOpt. Use with standard VAE and text encoder loaders."
+    DESCRIPTION = "Load quantized UNet by restoring ModelOpt state into base model. Requires original unquantized model as input."
 
     # Model cache
     _model_cache = {}
 
-    def load_unet(self, unet_name, precision="auto", enable_caching=True):
-        """Load ModelOpt quantized UNet"""
+    def load_unet(self, base_model, unet_name, enable_caching=True):
+        """Load ModelOpt quantized UNet by restoring into base model"""
+
+        # Import ModelOpt
+        try:
+            import modelopt.torch.opt as mto
+        except ImportError:
+            raise RuntimeError(
+                "❌ ModelOpt not installed!\n\n"
+                "Please install: pip install nvidia-modelopt"
+            )
 
         # Validate GPU
         gpu_info = get_gpu_info()
         if not gpu_info["available"]:
             raise RuntimeError(
                 "❌ No CUDA device available!\n\n"
-                "ModelOpt requires an NVIDIA GPU with CUDA support.\n"
-                "Detected: No CUDA device\n\n"
-                "Please ensure:\n"
-                "• NVIDIA GPU is properly installed\n"
-                "• CUDA drivers are installed\n"
-                "• PyTorch CUDA version matches your CUDA installation"
+                "ModelOpt requires an NVIDIA GPU with CUDA support."
             )
-
-        # Check precision compatibility
-        if precision != "auto":
-            is_compatible, message = check_precision_compatibility(precision)
-            if not is_compatible:
-                raise RuntimeError(
-                    f"❌ Precision {precision.upper()} not supported on this GPU\n\n"
-                    f"{message}\n\n"
-                    f"Your GPU: {gpu_info['name']}\n"
-                    f"Compute Capability: {gpu_info['compute_capability']}\n\n"
-                    f"Please select a compatible precision or use 'auto'."
-                )
 
         # Get model path
         unet_path = folder_paths.get_full_path("modelopt_unet", unet_name)
@@ -114,7 +98,7 @@ class ModelOptUNetLoader:
                 f"❌ Model not found: {unet_name}\n\n"
                 f"Please place your ModelOpt quantized UNet in:\n"
                 f"  ComfyUI/models/modelopt_unet/\n\n"
-                f"Supported formats: .safetensors, .pt, .pth, .ckpt"
+                f"Supported formats: .pt, .pth"
             )
 
         # Validate model file
@@ -123,41 +107,68 @@ class ModelOptUNetLoader:
             raise RuntimeError(f"❌ Invalid model file:\n{error}")
 
         # Check cache
-        cache_key = f"{unet_path}_{precision}"
+        cache_key = f"{unet_path}"
         if enable_caching and cache_key in self._model_cache:
             print(f"✓ Loading {unet_name} from cache")
             return (self._model_cache[cache_key],)
 
-        # Load the model
-        print(f"Loading ModelOpt UNet: {unet_name}")
-        print(f"  Precision: {precision}")
+        print(f"\n{'='*60}")
+        print(f"Loading Quantized Model with ModelOpt")
+        print(f"{'='*60}")
+        print(f"  Quantized model: {unet_name}")
         print(f"  GPU: {gpu_info['name']} (SM {gpu_info['compute_capability']})")
 
         try:
-            # Load state dict
-            sd = comfy.utils.load_torch_file(unet_path, safe_load=True)
+            # Clone the base model to avoid modifying the original
+            print(f"\n  Cloning base model...")
+            quantized_model = base_model.clone()
 
-            # Detect model type and precision from metadata
-            model_type, detected_precision = self._detect_model_info(sd, unet_path)
+            # Extract diffusion model from ComfyUI's model wrapper
+            # ComfyUI structure: model (ModelPatcher) -> model.model (BaseModel) -> model.model.diffusion_model (UNet)
+            diffusion_model = quantized_model.model.diffusion_model
 
-            if precision == "auto":
-                precision = detected_precision
-                print(f"  Auto-detected precision: {precision}")
+            print(f"  Base model architecture: {type(diffusion_model).__name__}")
+            param_count = sum(p.numel() for p in diffusion_model.parameters())
+            print(f"  Parameters: {param_count:,} ({param_count/1e9:.2f}B)")
 
-            # Create model
-            model = self._create_model_from_state_dict(sd, model_type, precision)
+            # Restore quantized state using ModelOpt
+            print(f"\n  Restoring quantized state with mto.restore()...")
+            mto.restore(diffusion_model, unet_path)
+
+            # Verify quantizers were restored
+            from modelopt.torch.quantization.nn import TensorQuantizer
+            quantizer_count = sum(1 for m in diffusion_model.modules() if isinstance(m, TensorQuantizer))
+
+            if quantizer_count == 0:
+                raise RuntimeError(
+                    f"❌ No quantizers found after restoration!\n\n"
+                    f"This may indicate:\n"
+                    f"• The saved model was not properly quantized\n"
+                    f"• Architecture mismatch between base model and saved model\n"
+                    f"• Corrupted saved model file\n\n"
+                    f"Please ensure:\n"
+                    f"1. The base_model has the same architecture as when quantized\n"
+                    f"2. The saved model was created with ModelOptSaveQuantized node\n"
+                    f"3. The saved file is not corrupted"
+                )
+
+            print(f"  ✓ Quantizers restored: {quantizer_count}")
+
+            # The diffusion_model is already modified in place by mto.restore()
+            # It's already part of quantized_model.model.diffusion_model
 
             # Cache if enabled
             if enable_caching:
-                self._model_cache[cache_key] = model
+                self._model_cache[cache_key] = quantized_model
 
             file_size = os.path.getsize(unet_path)
-            print(f"✓ Successfully loaded {unet_name}")
-            print(f"  Model type: {model_type}")
+            print(f"\n✓ Successfully loaded quantized model!")
             print(f"  File size: {format_bytes(file_size)}")
-            print(f"  Precision: {precision}")
+            print(f"  Quantizers: {quantizer_count}")
+            print(f"  Ready for inference")
+            print(f"{'='*60}\n")
 
-            return (model,)
+            return (quantized_model,)
 
         except Exception as e:
             import traceback
@@ -168,7 +179,8 @@ class ModelOptUNetLoader:
                 f"❌ Failed to load ModelOpt UNet: {unet_name}\n\n"
                 f"Error: {str(e)}\n\n"
                 f"Common issues:\n"
-                f"• Model was quantized for different GPU architecture\n"
+                f"• Base model architecture doesn't match saved model\n"
+                f"• Saved model not created with ModelOptSaveQuantized\n"
                 f"• Corrupted model file\n"
                 f"• Insufficient VRAM ({gpu_info['vram_gb']:.1f}GB available)\n"
                 f"• Missing ModelOpt dependencies\n\n"
