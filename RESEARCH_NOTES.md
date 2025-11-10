@@ -288,6 +288,14 @@ def unwrap_comfy_ops(model):
 
 ## 📝 DEVELOPMENT LOG
 
+### v0.3.0 (2025-01-10) - CRITICAL FIX
+- **IMPLEMENTED FIX**: Module unwrapping for ModelOpt compatibility
+- Added `_unwrap_comfy_ops()` to replace ComfyUI wrapped modules
+- Recursively converts `comfy.ops.disable_weight_init.{Linear,Conv2d,Conv1d}` → `torch.nn.{Linear,Conv2d,Conv1d}`
+- Preserves weights/biases during conversion
+- Should enable quantizers to insert successfully
+- **Status**: FIX READY FOR TESTING
+
 ### v0.2.2 (2025-01-10)
 - Fixed context dimension detection (2048 for SDXL)
 - Fixed quantization config (diffusion-specific vs LLM)
