@@ -1,36 +1,24 @@
-# ComfyUI ModelOpt Integration Requirements
-# Python 3.10-3.12 required
+# Core Dependencies - Cross-platform compatible
+# Install PyTorch separately based on your platform and CUDA version:
+#   Linux/Windows with CUDA 12.4: pip install torch --index-url https://download.pytorch.org/whl/cu124
+#   Linux/Windows with CUDA 12.1: pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   macOS: pip install torch
 
-# Core Dependencies
-# PyTorch with CUDA support (install separately with specific CUDA version)
-# Install PyTorch first:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu124
-
-# NVIDIA ModelOpt (includes quantization and optimization tools)
+# NVIDIA ModelOpt (requires PyTorch to be installed first)
 nvidia-modelopt[all]>=0.27.0
 
-# Optional but recommended dependencies
-triton>=2.0.0  # Accelerated quantization for SM 8.9+ GPUs
-
-# TensorRT for engine deployment (optional, for TensorRT engine support)
-# Note: TensorRT installation varies by platform
-# tensorrt>=8.6.0
-
-# Accelerate for memory-efficient loading
+# Model handling
+safetensors>=0.3.0
 accelerate>=0.20.0
 
-# Additional utilities
-safetensors>=0.3.0  # For safetensors format support
-onnx>=1.14.0  # For ONNX model support
-onnxruntime>=1.15.0  # ONNX Runtime (CPU)
-# onnxruntime-gpu>=1.15.0  # ONNX Runtime with GPU support (alternative to CPU)
-
-# Hugging Face libraries (for model loading)
+# Hugging Face libraries
 transformers>=4.30.0
 diffusers>=0.20.0
 
-# Development dependencies (optional)
-# pytest>=7.0.0
-# black>=23.0.0
-# flake8>=6.0.0
-# mypy>=1.0.0
+# Optional but useful
+onnx>=1.14.0
+onnxruntime>=1.15.0
+
+# Note: Triton is installed automatically with ModelOpt on supported platforms
+# For Windows, use: pip install -r requirements-windows.txt
+# For Linux, use: pip install -r requirements-linux.txt (if needed)

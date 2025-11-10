@@ -1,0 +1,84 @@
+[project]
+name = "comfy-modelopt"
+version = "0.1.0"
+description = "NVIDIA ModelOpt integration for ComfyUI - Quantize and optimize Stable Diffusion models (SDXL, SD1.5, SD3) with INT8/FP8/INT4"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = {text = "MIT"}
+authors = [
+    {name = "ComfyUI ModelOpt Contributors"}
+]
+keywords = ["comfyui", "nvidia", "modelopt", "tensorrt", "quantization", "stable-diffusion", "optimization"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "safetensors>=0.3.0",
+    "accelerate>=0.20.0",
+    "transformers>=4.30.0",
+    "diffusers>=0.20.0",
+]
+
+[project.optional-dependencies]
+modelopt = [
+    "nvidia-modelopt[all]>=0.27.0",
+]
+tensorrt = [
+    "tensorrt>=8.6.0",
+]
+onnx = [
+    "onnx>=1.14.0",
+    "onnxruntime>=1.15.0",
+]
+all = [
+    "nvidia-modelopt[all]>=0.27.0",
+    "onnx>=1.14.0",
+    "onnxruntime>=1.15.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/EnragedAntelope/comfy-modelopt"
+Documentation = "https://github.com/EnragedAntelope/comfy-modelopt/blob/main/docs/TECHNICAL_GUIDE.md"
+Repository = "https://github.com/EnragedAntelope/comfy-modelopt"
+"Bug Tracker" = "https://github.com/EnragedAntelope/comfy-modelopt/issues"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["nodes"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+
+[tool.comfyui]
+# ComfyUI Manager metadata
+display_name = "NVIDIA ModelOpt"
+description = "Quantize and optimize Stable Diffusion models with NVIDIA ModelOpt (INT8/FP8/INT4 for SDXL, SD1.5, SD3)"
+author = "ComfyUI ModelOpt Contributors"
+version = "0.1.0"
+node_list = [
+    "ModelOptUNetLoader",
+    "ModelOptQuantizeUNet",
+    "ModelOptCalibrationHelper",
+    "ModelOptSaveQuantized"
+]
+install_type = "git-clone"

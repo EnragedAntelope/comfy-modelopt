@@ -1,0 +1,8 @@
+# Linux-specific requirements
+# Install this after requirements.txt for Linux systems
+
+# Triton for accelerated quantization (SM 8.9+ GPUs)
+triton>=2.0.0
+
+# Optional: ONNX Runtime with GPU support for Linux
+# onnxruntime-gpu>=1.15.0
