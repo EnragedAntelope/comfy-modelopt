@@ -136,13 +136,37 @@ class ModelOptQuantizeUNet:
                 print(f"Skipping layers: {skip_layer_list}")
 
             # Select quantization config
-            print(f"\nPreparing quantization config...")
+            # NOTE: Default configs (INT8_DEFAULT_CFG, FP8_DEFAULT_CFG) are for LLMs
+            # Diffusion models (UNet CNNs) need custom configs
+            print(f"\nPreparing quantization config for diffusion model...")
+
             if precision == "int8":
-                quant_cfg = mtq.INT8_DEFAULT_CFG
+                quant_cfg = {
+                    "quant_cfg": {
+                        "*weight_quantizer": {"num_bits": 8, "axis": 0},
+                        "*input_quantizer": {"num_bits": 8, "axis": None},
+                        "*output_quantizer": {"enable": False},  # Disable output quantization
+                    },
+                    "algorithm": "max",
+                }
             elif precision == "fp8":
-                quant_cfg = mtq.FP8_DEFAULT_CFG
+                quant_cfg = {
+                    "quant_cfg": {
+                        "*weight_quantizer": {"num_bits": (4, 3), "axis": None},
+                        "*input_quantizer": {"num_bits": (4, 3), "axis": None},
+                        "*output_quantizer": {"enable": False},  # Disable output quantization
+                    },
+                    "algorithm": "max",
+                }
             elif precision == "int4":
-                quant_cfg = mtq.INT4_AWQ_CFG
+                quant_cfg = {
+                    "quant_cfg": {
+                        "*weight_quantizer": {"num_bits": 4, "axis": 0},
+                        "*input_quantizer": {"num_bits": 8, "axis": None},  # Keep activations at INT8
+                        "*output_quantizer": {"enable": False},
+                    },
+                    "algorithm": "awq_lite",
+                }
             else:
                 raise ValueError(f"Unsupported precision: {precision}")
 
@@ -301,6 +325,10 @@ class ModelOptQuantizeUNet:
                 quant_cfg,
                 forward_loop
             )
+
+            # Print quantization summary to verify quantizers were inserted
+            print(f"\nQuantization Summary:")
+            mtq.print_quant_summary(quantized_diffusion_model)
 
             # Replace the diffusion model in the ComfyUI model structure
             # Clone the model patcher and replace the diffusion model
