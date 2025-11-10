@@ -16,12 +16,4 @@ from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
 
 # Display startup message
-print("\n" + "="*60)
-print("NVIDIA ModelOpt for ComfyUI")
-print("="*60)
-print("Loaded nodes:")
-for node_name in NODE_CLASS_MAPPINGS.keys():
-    print(f"  • {node_name}")
-print("\nQuantize diffusion models with INT8, FP8, or INT4")
-print("Achieve ~2x faster inference with minimal quality loss")
-print("="*60 + "\n")
+print("NVIDIA ModelOpt for ComfyUI loaded successfully")

@@ -264,3 +264,145 @@ def scan_model_directory(base_path, extensions):
                 models[rel_path] = abs_path
 
     return models
+
+
+def introspect_diffusion_model(model):
+    """
+    Comprehensive introspection of a diffusion model to detect architecture details.
+
+    This function analyzes the model structure to automatically determine:
+    - Model architecture type (SDXL, SD1.5, SD3, FLUX, etc.)
+    - Y dimension (pooled embeddings size) for class-conditional models
+    - Context dimension for text conditioning
+    - Latent channels and recommended spatial dimensions
+    - Forward pass signature
+
+    Args:
+        model: The UNet/diffusion model to introspect
+
+    Returns:
+        dict: Model architecture information
+
+    Example:
+        >>> info = introspect_diffusion_model(unet)
+        >>> print(f"Architecture: {info['architecture']}")
+        >>> print(f"Y dimension: {info['y_dim']}")
+    """
+    info = {
+        "architecture": "unknown",
+        "y_dim": None,
+        "context_dim": 768,
+        "latent_channels": 4,
+        "latent_spatial": 128,
+        "has_y_param": False,
+        "model_channels": None,
+        "num_heads": None,
+    }
+
+    # Detect y dimension (pooled embeddings) from various attributes
+    y_dim_candidates = []
+
+    # Method 1: Check adm_in_channels (SDXL attribute)
+    if hasattr(model, 'adm_in_channels'):
+        y_dim_candidates.append(("adm_in_channels", model.adm_in_channels))
+
+    # Method 2: Check y_dim attribute
+    if hasattr(model, 'y_dim'):
+        y_dim_candidates.append(("y_dim", model.y_dim))
+
+    # Method 3: Check label_emb layer dimensions
+    if hasattr(model, 'label_emb'):
+        label_emb = model.label_emb
+        # Try to get input dimension
+        if hasattr(label_emb, 'in_features'):
+            y_dim_candidates.append(("label_emb.in_features", label_emb.in_features))
+        elif hasattr(label_emb, '0') and hasattr(label_emb[0], 'in_features'):
+            # Sequential module - check first layer
+            y_dim_candidates.append(("label_emb[0].in_features", label_emb[0].in_features))
+        elif isinstance(label_emb, torch.nn.Sequential) and len(label_emb) > 0:
+            first_layer = label_emb[0]
+            if hasattr(first_layer, 'in_features'):
+                y_dim_candidates.append(("label_emb[0].in_features", first_layer.in_features))
+
+    # Method 4: Check time_embed layer (sometimes contains adm projection)
+    if hasattr(model, 'time_embed'):
+        time_embed = model.time_embed
+        # Look for layers that might be the adm projection
+        if isinstance(time_embed, torch.nn.Sequential):
+            for i, layer in enumerate(time_embed):
+                if isinstance(layer, torch.nn.Linear):
+                    # Check if this might be processing concatenated time + y
+                    # SDXL concatenates time_emb (1280) + y (2816) = 4096 input
+                    if hasattr(layer, 'in_features'):
+                        in_feat = layer.in_features
+                        # Common patterns:
+                        # SDXL: 4096 input (1280 time + 2816 y) -> y_dim = 2816
+                        # SD1.5: 1280 input (no y)
+                        if in_feat > 2000:  # Likely has y concatenated
+                            # Try to infer y_dim
+                            # Usually time_embed_dim + y_dim = in_features
+                            if hasattr(model, 'model_channels'):
+                                time_embed_dim = model.model_channels * 4
+                                potential_y_dim = in_feat - time_embed_dim
+                                if potential_y_dim > 0:
+                                    y_dim_candidates.append((f"inferred_from_time_embed[{i}]", potential_y_dim))
+
+    # Select most reliable y_dim
+    if y_dim_candidates:
+        # Prefer explicit attributes over inferred values
+        priority_order = ["adm_in_channels", "y_dim", "label_emb"]
+        for priority_name in priority_order:
+            for source, value in y_dim_candidates:
+                if priority_name in source:
+                    info["y_dim"] = value
+                    info["y_dim_source"] = source
+                    info["has_y_param"] = True
+                    break
+            if info["y_dim"] is not None:
+                break
+
+        # If still None, use first candidate
+        if info["y_dim"] is None and y_dim_candidates:
+            info["y_dim"] = y_dim_candidates[0][1]
+            info["y_dim_source"] = y_dim_candidates[0][0]
+            info["has_y_param"] = True
+
+    # Detect context dimension
+    if hasattr(model, 'context_dim'):
+        info["context_dim"] = model.context_dim
+    elif hasattr(model, 'transformer_depth'):
+        # Might be a transformer-based model
+        info["context_dim"] = 768  # Common default
+
+    # Detect model channels (base channel count)
+    if hasattr(model, 'model_channels'):
+        info["model_channels"] = model.model_channels
+
+    # Detect number of attention heads
+    if hasattr(model, 'num_heads'):
+        info["num_heads"] = model.num_heads
+
+    # Try to determine architecture based on detected features
+    if info["y_dim"] == 2816:
+        info["architecture"] = "SDXL-like"
+    elif info["y_dim"] == 1280:
+        info["architecture"] = "SDXL-compact"
+    elif info["y_dim"] is None and info["context_dim"] == 768:
+        info["architecture"] = "SD1.5-like"
+    elif info["context_dim"] == 4096:
+        info["architecture"] = "SD3-like"
+
+    # Detect latent format
+    # Check for in_channels attribute
+    if hasattr(model, 'in_channels'):
+        info["latent_channels"] = model.in_channels
+    elif hasattr(model, 'conv_in') and hasattr(model.conv_in, 'in_channels'):
+        info["latent_channels"] = model.conv_in.in_channels
+
+    # Infer recommended spatial dimensions based on model size
+    if info["latent_channels"] == 16:
+        info["latent_spatial"] = 128  # SD3 uses 16 channels
+    elif info["latent_channels"] == 4:
+        info["latent_spatial"] = 128  # SDXL/SD1.5 use 4 channels
+
+    return info
