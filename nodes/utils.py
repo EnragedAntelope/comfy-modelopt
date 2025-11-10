@@ -297,7 +297,18 @@ def introspect_diffusion_model(model):
         "has_y_param": False,
         "model_channels": None,
         "num_heads": None,
+        "detected_attributes": [],  # Track what we actually found
     }
+
+    # DEBUG: List all top-level attributes to help troubleshoot
+    all_attrs = [attr for attr in dir(model) if not attr.startswith('_')]
+    info["all_model_attributes"] = all_attrs
+
+    # Check for specific important attributes
+    important_attrs = ['adm_in_channels', 'y_dim', 'label_emb', 'time_embed', 'model_channels',
+                       'context_dim', 'in_channels', 'conv_in', 'num_heads', 'num_res_blocks']
+    found_attrs = {attr: hasattr(model, attr) for attr in important_attrs}
+    info["important_attributes_found"] = found_attrs
 
     # Detect y dimension (pooled embeddings) from various attributes
     y_dim_candidates = []
@@ -404,5 +415,71 @@ def introspect_diffusion_model(model):
         info["latent_spatial"] = 128  # SD3 uses 16 channels
     elif info["latent_channels"] == 4:
         info["latent_spatial"] = 128  # SDXL/SD1.5 use 4 channels
+
+    # Count parameters to help identify model
+    param_count = sum(p.numel() for p in model.parameters())
+    info["param_count"] = param_count
+    info["param_count_billions"] = param_count / 1e9
+
+    # Use parameter count as additional signal
+    # SDXL: ~2.5-2.6B parameters
+    # SD1.5: ~900M parameters
+    # SD3: ~2B parameters
+    if param_count > 2e9 and info["y_dim"] is None:
+        # Likely SDXL but failed to detect y_dim
+        # Try to infer y_dim = 2816 for SDXL
+        info["y_dim"] = 2816
+        info["y_dim_source"] = "inferred_from_param_count_SDXL"
+        info["has_y_param"] = True
+        info["architecture"] = "SDXL-like (inferred from 2.5B params)"
+
+    # FINAL CHECK: Test forward pass to definitively determine if y is needed
+    # This is the most reliable method
+    if info["y_dim"] is None or not info["has_y_param"]:
+        print(f"  Attempting test forward pass to detect y parameter requirement...")
+        try:
+            with torch.no_grad():
+                # Create dummy inputs
+                device = next(model.parameters()).device
+                dtype = next(model.parameters()).dtype
+
+                test_latent = torch.randn(1, info["latent_channels"], 64, 64, device=device, dtype=dtype)
+                test_timestep = torch.tensor([999.0], device=device, dtype=dtype)
+                test_context = torch.randn(1, 77, info["context_dim"], device=device, dtype=dtype)
+
+                # Try without y first
+                try:
+                    _ = model(test_latent, test_timestep, test_context)
+                    # Success without y - doesn't need it
+                    info["has_y_param"] = False
+                    info["detected_attributes"].append("test_forward_pass_no_y_SUCCESS")
+                except TypeError as e:
+                    error_str = str(e)
+                    if "must specify y" in error_str or "class-conditional" in error_str:
+                        # Needs y parameter!
+                        info["has_y_param"] = True
+                        # Try to infer y_dim
+                        if info["y_dim"] is None:
+                            # Try common SDXL value
+                            info["y_dim"] = 2816
+                            info["y_dim_source"] = "inferred_from_forward_pass_error"
+                        info["detected_attributes"].append("test_forward_pass_NEEDS_Y")
+                    elif "unexpected keyword argument" in error_str:
+                        # Model uses different signature
+                        info["detected_attributes"].append(f"test_forward_pass_different_signature: {error_str}")
+                except Exception as e:
+                    info["detected_attributes"].append(f"test_forward_pass_failed: {str(e)[:100]}")
+        except Exception as e:
+            info["detected_attributes"].append(f"test_forward_pass_setup_failed: {str(e)[:100]}")
+
+    # Final architecture determination
+    if info["y_dim"] == 2816 or info["param_count_billions"] > 2.0:
+        info["architecture"] = "SDXL-like"
+    elif info["y_dim"] == 1280:
+        info["architecture"] = "SDXL-compact"
+    elif not info["has_y_param"] and info["context_dim"] == 768:
+        info["architecture"] = "SD1.5-like"
+    elif info["context_dim"] == 4096:
+        info["architecture"] = "SD3-like"
 
     return info

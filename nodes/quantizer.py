@@ -134,10 +134,20 @@ class ModelOptQuantizeUNet:
             print(f"\nIntrospecting model architecture...")
             model_info = introspect_diffusion_model(diffusion_model)
             print(f"  Architecture: {model_info['architecture']}")
+            print(f"  Parameters: {model_info['param_count_billions']:.2f}B ({model_info['param_count']:,})")
             print(f"  Y dimension: {model_info['y_dim']} ({model_info.get('y_dim_source', 'not detected')})")
             print(f"  Context dimension: {model_info['context_dim']}")
             print(f"  Latent format: {model_info['latent_channels']}x{model_info['latent_spatial']}x{model_info['latent_spatial']}")
             print(f"  Has y parameter: {model_info['has_y_param']}")
+
+            # Debug: Print found attributes
+            if model_info.get('important_attributes_found'):
+                found = [k for k, v in model_info['important_attributes_found'].items() if v]
+                print(f"  Found attributes: {', '.join(found) if found else 'None'}")
+
+            # Debug: Print detection events
+            if model_info.get('detected_attributes'):
+                print(f"  Detection events: {', '.join(model_info['detected_attributes'])}")
 
             # Parse skip layers
             skip_layer_list = []
@@ -171,6 +181,13 @@ class ModelOptQuantizeUNet:
 
             print(f"  Using base config: {precision.upper()}")
             print(f"  Algorithm: {quant_cfg.get('algorithm', 'default')}")
+
+            # Debug: Print config details to troubleshoot "Inserted 0 quantizers"
+            if "quant_cfg" in quant_cfg:
+                print(f"  Config keys: {list(quant_cfg['quant_cfg'].keys())}")
+                # Check if there are any wildcard patterns
+                wildcards = [k for k in quant_cfg['quant_cfg'].keys() if '*' in k]
+                print(f"  Wildcard patterns: {wildcards}")
 
             # Customize config to skip certain layers if specified
             if skip_layer_list:
