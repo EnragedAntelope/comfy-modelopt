@@ -65,15 +65,22 @@ TensorQuantizer created: TensorQuantizer(8 bit fake per-tensor amax=dynamic cali
 ```
 - ModelOpt v0.37.0 API works with PyTorch version
 - Can manually create quantizers
-- Problem is with `mtq.quantize()` not recognizing modules
+- Problem WAS with `mtq.quantize()` not recognizing wrapped modules → FIXED
+
+**Module Unwrapping** - SOLVED ✓✓✓
+- **Problem**: ComfyUI uses `comfy.ops.disable_weight_init.Linear/Conv2d`
+- **Root Cause**: `__module__` attribute is `'comfy.ops'`, NOT `'comfy.ops.disable_weight_init'`
+- **Solution**: Check `__module__ == 'comfy.ops'` AND `__name__ == 'Linear'`
+- **Implementation**: `_unwrap_comfy_ops()` recursively replaces modules in `_modules` dict
+- **Result**: 794 modules unwrapped → 2382 quantizers inserted ✓
 
 ---
 
-## 🔴 CRITICAL ISSUE IDENTIFIED
+## ✅ CRITICAL ISSUE SOLVED
 
-### **ComfyUI Custom Module Wrappers**
+### **ComfyUI Custom Module Wrappers** - FIXED IN v0.3.0
 
-**Root Cause** - DEFINITIVELY IDENTIFIED ✓
+**Root Cause** - IDENTIFIED AND SOLVED ✓
 
 ComfyUI uses custom wrapped modules instead of standard PyTorch:
 ```
@@ -97,21 +104,27 @@ Sample Linear layer: time_embed.0
 - ModelOpt uses `isinstance()` checks, which WOULD work
 - But ModelOpt has additional type filtering that rejects wrapped modules
 
-**Test Results**:
+**Test Results (BEFORE FIX)**:
 - 743 Linear layers detected → ALL wrapped
 - 51 Conv2d layers detected → ALL wrapped
-- 0 quantizers inserted → ModelOpt can't see them
+- 0 quantizers inserted → ModelOpt couldn't see them
 
 **Model Details**:
 - Class: `comfy.ldm.modules.diffusionmodules.openaimodel.UNetModel`
 - Module: `comfy.ops.disable_weight_init`
 - Properly inherits from `torch.nn.Module`
 
+**Test Results (AFTER FIX)**: ✓✓✓
+- 794 modules unwrapped (743 Linear + 51 Conv2d)
+- Modules now standard `torch.nn.Linear/Conv2d`
+- **2382 quantizers successfully inserted**
+- ModelOpt FP8_DEFAULT_CFG works perfectly
+
 ---
 
-## 🛠️ POTENTIAL SOLUTIONS
+## ✅ IMPLEMENTED SOLUTION
 
-### Option 1: Replace Wrapped Modules with Standard PyTorch (RECOMMENDED)
+### Option 1: Replace Wrapped Modules with Standard PyTorch - IMPLEMENTED ✓
 
 **Approach**: Before quantization, recursively replace ComfyUI's wrapped modules with standard torch.nn versions.
 
@@ -288,12 +301,14 @@ def unwrap_comfy_ops(model):
 
 ## 📝 DEVELOPMENT LOG
 
-### v0.3.0 (2025-11-10) - CRITICAL FIX ATTEMPT (FAILED)
-- **ATTEMPTED FIX**: Module unwrapping for ModelOpt compatibility
-- Added `_unwrap_comfy_ops()` to replace ComfyUI wrapped modules
-- **BUG IDENTIFIED**: Wrong module path check (`'comfy.ops.disable_weight_init'` vs `'comfy.ops'`)
-- Function replaced 0 modules due to incorrect string comparison
-- **Status**: BUG FIXED, READY FOR RE-TEST
+### v0.3.0 (2025-11-10) - CRITICAL FIX SUCCESS
+- **BREAKTHROUGH**: Module unwrapping WORKS!
+- Fixed module path check: `'comfy.ops'` instead of `'comfy.ops.disable_weight_init'`
+- Successfully replaced 794 modules (743 Linear + 51 Conv2d)
+- ModelOpt now recognizes modules: **2382 quantizers inserted**
+- Fixed double-quantization error with deep copy for tests
+- Uses built-in FP8_DEFAULT_CFG which works perfectly
+- **Status**: QUANTIZATION WORKING - READY FOR FULL TEST WITH CALIBRATION
 
 ### v0.2.2 (2025-11-10)
 - Fixed context dimension detection (2048 for SDXL)
