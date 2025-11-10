@@ -280,6 +280,36 @@ class ModelOptQuantizeUNet:
             if existing_quantizers:
                 print(f"  Found: {existing_quantizers[:5]}")
 
+            # CRITICAL DIAGNOSTIC: Check if Linear/Conv2d are actually standard PyTorch modules
+            print(f"\nDebug: Checking module types for ModelOpt compatibility...")
+            sample_linear = None
+            sample_conv = None
+            for name, module in diffusion_model.named_modules():
+                if isinstance(module, torch.nn.Linear) and sample_linear is None:
+                    sample_linear = (name, module)
+                if isinstance(module, torch.nn.Conv2d) and sample_conv is None:
+                    sample_conv = (name, module)
+                if sample_linear and sample_conv:
+                    break
+
+            if sample_linear:
+                name, module = sample_linear
+                print(f"  Sample Linear layer: {name}")
+                print(f"    Type: {type(module)}")
+                print(f"    Module: {type(module).__module__}")
+                print(f"    Is torch.nn.Linear: {type(module) == torch.nn.Linear}")
+                print(f"    Is subclass of torch.nn.Linear: {issubclass(type(module), torch.nn.Linear)}")
+                print(f"    MRO: {[c.__name__ for c in type(module).__mro__[:5]]}")
+
+            if sample_conv:
+                name, module = sample_conv
+                print(f"  Sample Conv2d layer: {name}")
+                print(f"    Type: {type(module)}")
+                print(f"    Module: {type(module).__module__}")
+                print(f"    Is torch.nn.Conv2d: {type(module) == torch.nn.Conv2d}")
+                print(f"    Is subclass of torch.nn.Conv2d: {issubclass(type(module), torch.nn.Conv2d)}")
+                print(f"    MRO: {[c.__name__ for c in type(module).__mro__[:5]]}")
+
             # CRITICAL: Ensure model is fully on GPU and in eval mode for ModelOpt
             device = comfy.model_management.get_torch_device()
             print(f"Debug: Moving model to {device} and setting eval mode...")
@@ -408,6 +438,32 @@ class ModelOptQuantizeUNet:
                 builtin_cfg = mtq.INT8_DEFAULT_CFG
                 print(f"  Found INT8_DEFAULT_CFG: {builtin_cfg}")
 
+            # CRITICAL: Check if ModelOpt is filtering out our modules
+            print(f"\nDebug: Checking if ModelOpt can see our modules...")
+            try:
+                # Try to manually call ModelOpt's config parsing to see what it thinks
+                if hasattr(mtq, 'config') and hasattr(mtq.config, 'QuantizeConfig'):
+                    test_qconfig = mtq.config.QuantizeConfig(quant_cfg)
+                    print(f"  QuantizeConfig created successfully")
+                    print(f"  Config type: {type(test_qconfig)}")
+                    # Try to get the module filter if available
+                    if hasattr(test_qconfig, '_module_filter'):
+                        print(f"  Has module filter: {test_qconfig._module_filter}")
+            except Exception as e:
+                print(f"  Could not create QuantizeConfig: {str(e)[:200]}")
+
+            # Check if there's a module registration issue
+            print(f"\nDebug: Checking module registration...")
+            all_named_modules = list(diffusion_model.named_modules())
+            print(f"  Total named_modules: {len(all_named_modules)}")
+            print(f"  Sample module names: {[name for name, _ in all_named_modules[:10]]}")
+
+            # Check if the model's __class__ might be confusing ModelOpt
+            print(f"\nDebug: Model class hierarchy:")
+            print(f"  Model class: {diffusion_model.__class__}")
+            print(f"  Model bases: {diffusion_model.__class__.__bases__}")
+            print(f"  Is nn.Module: {isinstance(diffusion_model, torch.nn.Module)}")
+
             # DIAGNOSTIC: Try a very permissive config first to see if ANYTHING works
             print(f"\nDebug: Testing with permissive config first...")
             test_cfg = {
@@ -432,6 +488,34 @@ class ModelOptQuantizeUNet:
                         quant_cfg = builtin_cfg
                 except Exception as e:
                     print(f"  Built-in config test failed: {str(e)[:200]}")
+
+            # LAST RESORT: Try manually adding quantizer to one module to test API
+            print(f"\nDebug: Testing manual quantizer insertion...")
+            try:
+                from modelopt.torch.quantization.nn import TensorQuantizer
+                from modelopt.torch.quantization import tensor_quant
+
+                # Find first Linear layer
+                test_linear = None
+                test_linear_name = None
+                for name, module in diffusion_model.named_modules():
+                    if isinstance(module, torch.nn.Linear):
+                        test_linear = module
+                        test_linear_name = name
+                        break
+
+                if test_linear:
+                    print(f"  Attempting to manually add quantizer to: {test_linear_name}")
+                    # Try to create a quantizer manually
+                    try:
+                        manual_quantizer = TensorQuantizer()
+                        print(f"  TensorQuantizer created: {manual_quantizer}")
+                        print(f"  This proves ModelOpt's quantizer API works with this PyTorch version")
+                    except Exception as e:
+                        print(f"  Failed to create TensorQuantizer: {str(e)[:200]}")
+                        print(f"  This suggests ModelOpt API incompatibility")
+            except ImportError as e:
+                print(f"  Could not import TensorQuantizer: {str(e)[:200]}")
 
             try:
                 # Try quantizing with the permissive config (no forward loop, just see if quantizers insert)
