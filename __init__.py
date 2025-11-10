@@ -14,7 +14,7 @@ For more information, see: https://github.com/EnragedAntelope/comfy-modelopt
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 # Display startup message
 print("\n" + "="*60)

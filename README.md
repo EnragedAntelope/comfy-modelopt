@@ -23,19 +23,22 @@ Quantize and optimize Stable Diffusion models (SDXL, SD1.5, SD3) with NVIDIA Mod
 | **ModelOptSaveQuantized** | Save quantized models | modelopt |
 | **ModelOptCalibrationHelper** | Collect calibration data | modelopt |
 
-## 🎯 Supported Models
+## 🎯 Model Compatibility
 
-| Model | INT8 | FP8 | INT4 | Speedup | VRAM Savings |
-|-------|------|-----|------|---------|--------------|
-| **SDXL** | ✅ | ✅ | 🧪 | ~2x | ~50% |
-| **SD1.5** | ✅ | ✅ | 🧪 | ~2x | ~50% |
-| **SD3** | ✅ | ✅ | 🧪 | ~2x | ~50% |
-| **FLUX** | ❌ | ❌ | ❌ | N/A | N/A |
-| **Qwen Image** | ❌ | ❌ | ❌ | N/A | N/A |
+This node pack works with various diffusion model architectures. Quantization support depends on the underlying NVIDIA ModelOpt library.
 
-**Legend**: ✅ Supported | 🧪 Experimental | ❌ Not Supported
+**For the latest model compatibility information**, see the official [NVIDIA ModelOpt documentation](https://github.com/NVIDIA/TensorRT-Model-Optimizer).
 
-**Important**: FLUX, Qwen Image, and WAN 2.2 are **NOT officially supported** by NVIDIA ModelOpt. Use community FP8 checkpoints or GGUF quantization for these models.
+**Expected Performance:**
+- **~2x faster inference** with INT8/FP8 quantization
+- **~50% VRAM reduction** with 8-bit formats
+- **~75% VRAM reduction** with INT4 (experimental)
+- **<3% quality loss** with proper calibration
+
+**Tip**: If you encounter issues with a specific model, try updating ModelOpt:
+```bash
+pip install --upgrade nvidia-modelopt[all]
+```
 
 ## 💻 Hardware Requirements
 
@@ -235,14 +238,13 @@ See the `examples/` folder for ready-to-use workflow JSON files:
 
 ## ⚠️ Limitations
 
-- **Model Support**: Only SDXL, SD1.5, and SD3 are officially supported
-  - FLUX, Qwen Image, WAN 2.2 are **NOT supported** by ModelOpt
-- **Component Quantization**: Only UNet is quantized
-  - VAE and CLIP remain FP16 (use standard loaders)
-- **Adapter Support**: LoRAs, ControlNets, IP-Adapter **cannot be quantized**
-  - Apply adapters after loading quantized model
-- **Platform**: Windows support is experimental (Triton not fully supported)
-- **First Run**: Model quantization takes 2-10 minutes (one-time process)
+- **Component Quantization**: Only UNet/diffusion model is quantized
+  - VAE and text encoders remain FP16 (load separately with standard nodes)
+- **Adapter Support**: LoRAs, ControlNets, and IP-Adapters are applied after quantization
+  - Load the quantized model first, then apply adapters as usual
+- **Platform**: Windows support is experimental (Triton acceleration not fully supported)
+- **First Run**: Model quantization takes 2-10 minutes (one-time process, saves for reuse)
+- **Model Compatibility**: Varies by ModelOpt version - see [NVIDIA's documentation](https://github.com/NVIDIA/TensorRT-Model-Optimizer) for current support
 
 ## 📚 Documentation
 

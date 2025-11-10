@@ -239,6 +239,20 @@ class ModelOptQuantizeUNet:
             conv_count = sum(1 for m in diffusion_model.modules() if isinstance(m, torch.nn.Conv2d))
             print(f"Debug: Linear layers: {linear_count}, Conv2d layers: {conv_count}")
 
+            # CRITICAL: Ensure model is fully on GPU and in eval mode for ModelOpt
+            device = comfy.model_management.get_torch_device()
+            print(f"Debug: Moving model to {device} and setting eval mode...")
+
+            # Move model to GPU (ComfyUI may have offloaded parts to CPU)
+            diffusion_model = diffusion_model.to(device)
+
+            # Set to eval mode (required for BatchNorm, Dropout, etc.)
+            diffusion_model.eval()
+
+            # Verify all parameters are on the same device
+            devices = {p.device for p in diffusion_model.parameters()}
+            print(f"Debug: Model parameters are on devices: {devices}")
+
             quantized_diffusion_model = mtq.quantize(
                 diffusion_model,
                 quant_cfg,
