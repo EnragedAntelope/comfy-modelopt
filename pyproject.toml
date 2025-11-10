@@ -1,6 +1,6 @@
 [project]
 name = "comfy-modelopt"
-version = "0.3.0"
+version = "0.4.0"
 description = "NVIDIA ModelOpt integration for ComfyUI - Quantize and optimize diffusion models with INT8/FP8/INT4"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -62,7 +62,7 @@ target-version = ['py310', 'py311', 'py312']
 display_name = "NVIDIA ModelOpt"
 description = "Quantize and optimize diffusion models with NVIDIA ModelOpt (INT8/FP8/INT4)"
 author = "enragedantelope"
-version = "0.3.0"
+version = "0.4.0"
 node_list = [
     "ModelOptUNetLoader",
     "ModelOptQuantizeUNet",
