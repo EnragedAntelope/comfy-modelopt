@@ -700,9 +700,11 @@ class ModelOptQuantizeUNet:
 
                 # Check if this child is a ComfyUI wrapped module
                 child_module_path = child.__class__.__module__
+                child_class_name = child.__class__.__name__
 
                 # Replace comfy.ops wrapped Linear
-                if child_module_path == 'comfy.ops.disable_weight_init' and isinstance(child, torch.nn.Linear):
+                # Note: __module__ is 'comfy.ops', not 'comfy.ops.disable_weight_init'
+                if child_module_path == 'comfy.ops' and child_class_name == 'Linear' and isinstance(child, torch.nn.Linear):
                     standard_linear = torch.nn.Linear(
                         in_features=child.in_features,
                         out_features=child.out_features,
@@ -722,7 +724,7 @@ class ModelOptQuantizeUNet:
                     replaced_count += 1
 
                 # Replace comfy.ops wrapped Conv2d
-                elif child_module_path == 'comfy.ops.disable_weight_init' and isinstance(child, torch.nn.Conv2d):
+                elif child_module_path == 'comfy.ops' and child_class_name == 'Conv2d' and isinstance(child, torch.nn.Conv2d):
                     standard_conv = torch.nn.Conv2d(
                         in_channels=child.in_channels,
                         out_channels=child.out_channels,
@@ -748,7 +750,7 @@ class ModelOptQuantizeUNet:
                     replaced_count += 1
 
                 # Replace comfy.ops wrapped Conv1d (if exists)
-                elif child_module_path == 'comfy.ops.disable_weight_init' and isinstance(child, torch.nn.Conv1d):
+                elif child_module_path == 'comfy.ops' and child_class_name == 'Conv1d' and isinstance(child, torch.nn.Conv1d):
                     standard_conv1d = torch.nn.Conv1d(
                         in_channels=child.in_channels,
                         out_channels=child.out_channels,
