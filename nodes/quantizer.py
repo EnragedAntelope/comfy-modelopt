@@ -216,6 +216,19 @@ class ModelOptQuantizeUNet:
                 # Get model dtype
                 model_dtype = next(diffusion_model_to_calibrate.parameters()).dtype
 
+                # Debug: Detect y dimension once before loop
+                y_dim_detected = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
+                if y_dim_detected is None:
+                    y_dim_detected = getattr(diffusion_model_to_calibrate, 'y_dim', None)
+                if y_dim_detected is None and hasattr(diffusion_model_to_calibrate, 'label_emb'):
+                    if hasattr(diffusion_model_to_calibrate.label_emb, 'in_features'):
+                        y_dim_detected = diffusion_model_to_calibrate.label_emb.in_features
+                    elif hasattr(diffusion_model_to_calibrate.label_emb, '0'):
+                        first_layer = diffusion_model_to_calibrate.label_emb[0]
+                        if hasattr(first_layer, 'in_features'):
+                            y_dim_detected = first_layer.in_features
+                print(f"Debug: Detected y_dim = {y_dim_detected}")
+
                 with torch.no_grad():
                     for i in range(min(calibration_steps, len(calib_latents))):
                         if i % 10 == 0:
@@ -241,7 +254,22 @@ class ModelOptQuantizeUNet:
                         y_dim = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
                         if y_dim is None:
                             # Try alternative attribute names
-                            y_dim = getattr(diffusion_model_to_calibrate, 'y_dim', 1280)  # SDXL default
+                            y_dim = getattr(diffusion_model_to_calibrate, 'y_dim', None)
+                        if y_dim is None:
+                            # Try to infer from label_emb or time_embed layers
+                            if hasattr(diffusion_model_to_calibrate, 'label_emb'):
+                                # Check the input dimension of label_emb
+                                if hasattr(diffusion_model_to_calibrate.label_emb, 'in_features'):
+                                    y_dim = diffusion_model_to_calibrate.label_emb.in_features
+                                elif hasattr(diffusion_model_to_calibrate.label_emb, '0'):
+                                    # Sequential module
+                                    first_layer = diffusion_model_to_calibrate.label_emb[0]
+                                    if hasattr(first_layer, 'in_features'):
+                                        y_dim = first_layer.in_features
+                        if y_dim is None:
+                            # Default to common SDXL size
+                            y_dim = 1280
+
                         y = torch.randn(1, y_dim, device=device, dtype=model_dtype)
 
                         # Forward pass - try different signatures
