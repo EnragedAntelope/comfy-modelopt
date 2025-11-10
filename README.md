@@ -1,10 +1,32 @@
 # NVIDIA ModelOpt for ComfyUI
 
+> **⚠️ PROJECT STATUS: ON HOLD (2025-11-10)**
+>
+> **Current Status**: This project is on hold pending PyTorch compatibility fixes.
+>
+> **Issue**: ModelOpt quantized models have known compatibility issues with PyTorch/TorchScript that prevent full end-to-end inference in ComfyUI. While quantization and save/load work correctly, encode/decode operations are currently blocked.
+>
+> **What Works**:
+> - ✅ Model quantization (v0.3.0)
+> - ✅ Save/Load pipeline (v0.4.0)
+>
+> **What's Blocked**:
+> - ❌ Full inference in ComfyUI (pending PyTorch updates)
+>
+> **Alternative**: Works in Diffusers wrapper (confirmed by community testing)
+>
+> **Recommendation**: Wait for PyTorch upstream fixes before production use.
+>
+> See [RESEARCH_NOTES.md](RESEARCH_NOTES.md) for technical details.
+
+---
+
 Quantize and optimize Stable Diffusion models with NVIDIA ModelOpt directly in ComfyUI. Achieve **~2x faster inference** with INT8/FP8 quantization while maintaining image quality. Works with various diffusion model architectures including SDXL, SD1.5, SD3, and more.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![CUDA](https://img.shields.io/badge/CUDA-12.0%2B-green)
+![Status](https://img.shields.io/badge/status-on%20hold-yellow)
 
 ## ✨ Features
 

@@ -2,7 +2,36 @@
 
 **Purpose**: Track technical findings, known issues, and solutions for future development without relearning.
 
-**Last Updated**: 2025-01-10
+**Last Updated**: 2025-11-10
+
+---
+
+## ⚠️ PROJECT STATUS - ON HOLD
+
+**BLOCKING ISSUE**: PyTorch/TorchScript compatibility issues with ModelOpt quantized models in ComfyUI.
+
+**Source**: Community feedback from @marduk191 (2025-11-10):
+- "encoding/decoding won't work in torch until they update it"
+- "works fine in diffusers" but not in native PyTorch/ComfyUI
+- Submitted PR to PyTorch for encoder script fixes
+- Waiting for upstream PyTorch updates
+
+**What Works**:
+- ✅ Model quantization (v0.3.0) - 794 modules unwrapped, 2382 quantizers inserted
+- ✅ Save/Load pipeline (v0.4.0) - `mto.save()`/`mto.restore()` implementation
+- ✅ Calibration starts successfully
+
+**What's Blocked**:
+- ❌ Full end-to-end inference in ComfyUI (pending PyTorch updates)
+- ❌ Encode/decode operations with quantized models
+- ❌ Production use until compatibility issues resolved
+
+**Alternative Path**:
+- Works in Diffusers wrapper (confirmed by marduk)
+- May work with TensorRT export (untested)
+- Native ComfyUI support pending PyTorch fixes
+
+**Recommendation**: Wait for PyTorch updates before continuing development.
 
 ---
 
@@ -280,14 +309,33 @@ base_model.load_state_dict(torch.load("weights.pth"))
 
 ## ⚠️ KNOWN LIMITATIONS
 
-### Current Implementation
+### Blocking Issues (Project on Hold)
 
-1. **ComfyUI Model Quantization** ✅ SOLVED (v0.3.0)
+1. **PyTorch/TorchScript Encode/Decode Incompatibility** ❌ BLOCKING
+   - **Issue**: Encode/decode operations don't work with quantized models in PyTorch
+   - **Source**: Community feedback (@marduk191, 2025-11-10)
+   - **Root Cause**: Outdated distributed API in public ModelOpt repo
+   - **Workaround**: Works in Diffusers wrapper (not ComfyUI native)
+   - **Fix**: Pending PyTorch upstream updates (PR submitted by marduk)
+   - **Impact**: Cannot do full end-to-end inference in ComfyUI
+   - **Status**: PROJECT ON HOLD until PyTorch fixes
+
+2. **Storage Inefficiency** ❌ NOT FIXED
+   - **Issue**: Loader requires original checkpoint + quantized model = 2x storage
+   - **Problem**: Defeats purpose of quantization (should reduce storage, not increase)
+   - **Root Cause**: `mto.restore()` needs base model architecture to restore into
+   - **Potential Fix**: Save architecture metadata, create empty model from config
+   - **Status**: Not implemented due to project hold
+   - **Workaround**: Keep original checkpoint loaded in workflow session
+
+### Resolved Issues
+
+3. **ComfyUI Model Quantization** ✅ SOLVED (v0.3.0)
    - Root cause WAS: Module type mismatch
    - Solution: Module unwrapping (_unwrap_comfy_ops)
    - Status: WORKING - 794 modules unwrapped, 2382 quantizers inserted
 
-2. **Save/Load Pipeline** ✅ FIXED (v0.4.0)
+4. **Save/Load Pipeline** ✅ FIXED (v0.4.0)
    - **WAS BROKEN**: Lost quantizer infrastructure during save/load
    - **FIX**: Complete rewrite using `mto.save()` and `mto.restore()`
    - **Save**: `mto.save(diffusion_model, path)` preserves quantizers
@@ -295,11 +343,13 @@ base_model.load_state_dict(torch.load("weights.pth"))
    - **Requirement**: Loader now needs base unquantized model as input
    - **Status**: WORKING - Quantizer infrastructure preserved correctly
 
-3. **No Verification of Quantization Quality**
+### Future Improvements
+
+5. **No Verification of Quantization Quality**
    - Even if quantization works, no validation that output quality is acceptable
    - Need to add: PSNR, SSIM, or visual comparison tests
 
-4. **No Support for Non-UNet Components**
+6. **No Support for Non-UNet Components**
    - VAE: Not quantizable (per ModelOpt design)
    - CLIP: Not quantizable
    - Only UNet backbone can be quantized
@@ -460,15 +510,33 @@ mte.export_to_tensorrt(
 - Module: `comfy.ops.disable_weight_init`
 - Model: `comfy.ldm.modules.diffusionmodules.openaimodel.UNetModel`
 
-### Related Issues
+### Related Issues & Community Feedback
+
+**PyTorch/TorchScript Compatibility** (BLOCKING - 2025-11-10):
+- Source: @marduk191 community feedback
+- Issue: "encoding/decoding won't work in torch until they update it"
+- Status: PR submitted to PyTorch for encoder script fixes
+- Workaround: Works in Diffusers wrapper, not native PyTorch/ComfyUI
+- Related: [PyTorch Issue #76726](https://github.com/pytorch/pytorch/issues/76726) - TorchScript quantization runtime errors
+- Related: [PyTorch Issue #75005](https://github.com/pytorch/pytorch/issues/75005) - Cannot create TorchScript from quantized models
+
+**Storage Inefficiency** (IDENTIFIED - 2025-11-10):
+- Current loader requires: Original checkpoint + Quantized model = 2x storage
+- Problem: Defeats purpose of quantization (should reduce storage)
+- Root Cause: `mto.restore()` needs base model architecture
+- Potential Fix: Save architecture metadata, create empty model from config
+- Status: Not implemented due to project hold
+
+**ComfyUI Module Wrapping**:
 - ModelOpt expects exact torch.nn types
-- ComfyUI optimizes with custom wrappers
-- Fundamental incompatibility requiring adapter layer
+- ComfyUI optimizes with custom wrappers (`comfy.ops.disable_weight_init`)
+- Solution: Module unwrapping before quantization (SOLVED v0.3.0)
 
 ---
 
-**Status**: ✅ FULLY FUNCTIONAL - v0.4.0
-- Module unwrapping: Working (794 modules, 2382 quantizers)
-- Quantization: Working (FP8/INT8/INT4)
-- Save/Load: Fixed with `mto.save()`/`mto.restore()`
-- Complete end-to-end pipeline functional
+**Status**: ⚠️ ON HOLD - v0.4.0
+- Module unwrapping: ✅ Working (794 modules, 2382 quantizers)
+- Quantization: ✅ Working (FP8/INT8/INT4)
+- Save/Load: ✅ Fixed with `mto.save()`/`mto.restore()`
+- Full Inference: ❌ BLOCKED (PyTorch compatibility pending)
+- **Recommendation**: Wait for PyTorch updates before resuming
