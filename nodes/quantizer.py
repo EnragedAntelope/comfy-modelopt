@@ -242,12 +242,43 @@ class ModelOptQuantizeUNet:
             print(f"Debug: Linear layers: {linear_count}, Conv2d layers: {conv_count}")
 
             # Debug: Print sample layer names to verify wildcard matching
-            print(f"Debug: Sample layer names:")
+            print(f"\nDebug: Model structure analysis:")
             sample_count = 0
+            linear_layers = []
+            conv_layers = []
             for name, module in diffusion_model.named_modules():
-                if isinstance(module, (torch.nn.Linear, torch.nn.Conv2d)) and sample_count < 10:
-                    print(f"  - {name} ({type(module).__name__})")
-                    sample_count += 1
+                if isinstance(module, torch.nn.Linear):
+                    linear_layers.append(name)
+                    if sample_count < 5:
+                        print(f"  Linear: {name} (in={module.in_features}, out={module.out_features})")
+                        sample_count += 1
+                elif isinstance(module, torch.nn.Conv2d):
+                    conv_layers.append(name)
+                    if sample_count < 10:
+                        print(f"  Conv2d: {name} (in={module.in_channels}, out={module.out_channels}, kernel={module.kernel_size})")
+                        sample_count += 1
+
+            print(f"\nDebug: Layer distribution:")
+            print(f"  Total Linear layers: {len(linear_layers)}")
+            print(f"  Total Conv2d layers: {len(conv_layers)}")
+            print(f"  First 3 Linear: {linear_layers[:3]}")
+            print(f"  First 3 Conv2d: {conv_layers[:3]}")
+            print(f"  Last 3 Linear: {linear_layers[-3:]}")
+            print(f"  Last 3 Conv2d: {conv_layers[-3:]}")
+
+            # Debug: Check model's module structure
+            print(f"\nDebug: Top-level model attributes:")
+            top_attrs = [attr for attr in dir(diffusion_model) if not attr.startswith('_')][:20]
+            print(f"  First 20 attributes: {', '.join(top_attrs)}")
+
+            # Debug: Check for any existing quantizers (shouldn't be any)
+            existing_quantizers = []
+            for name, module in diffusion_model.named_modules():
+                if 'quantiz' in str(type(module)).lower():
+                    existing_quantizers.append((name, type(module).__name__))
+            print(f"\nDebug: Existing quantizers before mtq.quantize(): {len(existing_quantizers)}")
+            if existing_quantizers:
+                print(f"  Found: {existing_quantizers[:5]}")
 
             # CRITICAL: Ensure model is fully on GPU and in eval mode for ModelOpt
             device = comfy.model_management.get_torch_device()
@@ -356,9 +387,111 @@ class ModelOptQuantizeUNet:
                 print(f"  Calibration complete!")
 
             print(f"\nRunning ModelOpt quantization...")
-            print(f"Debug: About to call mtq.quantize() with config:")
+            print(f"Debug: Config details:")
             print(f"  Config type: {type(quant_cfg)}")
-            print(f"  Config: {quant_cfg}")
+            print(f"  Config keys: {list(quant_cfg.keys())}")
+            print(f"  quant_cfg type: {type(quant_cfg.get('quant_cfg', {}))}")
+            print(f"  quant_cfg keys: {list(quant_cfg.get('quant_cfg', {}).keys())}")
+            print(f"  Full config: {quant_cfg}")
+
+            # DIAGNOSTIC: Check what configs ModelOpt has available
+            print(f"\nDebug: Checking ModelOpt's built-in configs...")
+            available_configs = [attr for attr in dir(mtq) if 'CFG' in attr or 'CONFIG' in attr]
+            print(f"  Available config constants: {available_configs}")
+
+            # Try to use a built-in config if available
+            builtin_cfg = None
+            if hasattr(mtq, 'FP8_DEFAULT_CFG'):
+                builtin_cfg = mtq.FP8_DEFAULT_CFG
+                print(f"  Found FP8_DEFAULT_CFG: {builtin_cfg}")
+            elif hasattr(mtq, 'INT8_DEFAULT_CFG'):
+                builtin_cfg = mtq.INT8_DEFAULT_CFG
+                print(f"  Found INT8_DEFAULT_CFG: {builtin_cfg}")
+
+            # DIAGNOSTIC: Try a very permissive config first to see if ANYTHING works
+            print(f"\nDebug: Testing with permissive config first...")
+            test_cfg = {
+                "quant_cfg": {
+                    "default": {"num_bits": (4, 3), "axis": None}
+                },
+                "algorithm": "max",
+            }
+            print(f"  Test config: {test_cfg}")
+
+            # Also try with the built-in config if available
+            if builtin_cfg:
+                print(f"\nDebug: Also testing with ModelOpt's built-in FP8/INT8 config...")
+                try:
+                    test_builtin_model = mtq.quantize(diffusion_model, builtin_cfg, lambda m: None)
+                    from modelopt.torch.quantization.nn import TensorQuantizer
+                    builtin_test_count = sum(1 for m in test_builtin_model.modules() if isinstance(m, TensorQuantizer))
+                    print(f"  Built-in config result: {builtin_test_count} quantizers")
+                    if builtin_test_count > 0:
+                        print(f"  SUCCESS with built-in config! Using that instead.")
+                        # Use the built-in config for actual quantization
+                        quant_cfg = builtin_cfg
+                except Exception as e:
+                    print(f"  Built-in config test failed: {str(e)[:200]}")
+
+            try:
+                # Try quantizing with the permissive config (no forward loop, just see if quantizers insert)
+                print(f"  Attempting test quantization (this will fail during calibration, but we just want to see if quantizers insert)...")
+                test_model = mtq.quantize(diffusion_model, test_cfg, lambda m: None)
+
+                # Check if ANY quantizers were inserted
+                from modelopt.torch.quantization.nn import TensorQuantizer
+                test_quantizer_count = sum(1 for m in test_model.modules() if isinstance(m, TensorQuantizer))
+                print(f"  Test result: {test_quantizer_count} TensorQuantizers inserted with permissive config")
+
+                if test_quantizer_count > 0:
+                    print(f"  SUCCESS: Permissive config works! Issue is with wildcard matching.")
+                    print(f"  Sample quantizer locations:")
+                    count = 0
+                    for name, module in test_model.named_modules():
+                        if isinstance(module, TensorQuantizer) and count < 10:
+                            # Get parent module name
+                            parent_name = '.'.join(name.split('.')[:-1]) if '.' in name else 'root'
+                            print(f"    - {name} (parent: {parent_name})")
+                            count += 1
+                else:
+                    print(f"  FAILURE: Even permissive config doesn't work. Deeper issue with ModelOpt/model compatibility.")
+            except Exception as e:
+                print(f"  Test quantization exception (expected): {str(e)[:200]}")
+                # Still check if quantizers were inserted despite the error
+                from modelopt.torch.quantization.nn import TensorQuantizer
+                try:
+                    test_quantizer_count = sum(1 for m in test_model.modules() if isinstance(m, TensorQuantizer))
+                    print(f"  Quantizers inserted before error: {test_quantizer_count}")
+                except:
+                    print(f"  Could not check quantizer count after error")
+
+            print(f"\n" + "="*60)
+            print(f"Now running ACTUAL quantization with diffusion config...")
+            print(f"="*60)
+
+            # CRITICAL DEBUG: Check if ModelOpt has any special requirements
+            print(f"\nDebug: ModelOpt API inspection:")
+            print(f"  mtq.quantize signature: {mtq.quantize.__doc__[:500] if mtq.quantize.__doc__ else 'No docstring'}")
+
+            # Check if there are any config validation functions we should call
+            try:
+                if hasattr(mtq, 'config'):
+                    print(f"  mtq.config module exists: {dir(mtq.config)[:10]}")
+            except:
+                pass
+
+            # Try to see if ModelOpt has any verbose/debug mode
+            import logging
+            modelopt_logger = logging.getLogger('modelopt')
+            original_level = modelopt_logger.level
+            modelopt_logger.setLevel(logging.DEBUG)
+            print(f"  Enabled ModelOpt debug logging")
+
+            # Also check for any environment variables that might affect behavior
+            import os
+            relevant_env_vars = {k: v for k, v in os.environ.items() if 'modelopt' in k.lower() or 'quant' in k.lower()}
+            if relevant_env_vars:
+                print(f"  Relevant env vars: {relevant_env_vars}")
 
             quantized_diffusion_model = mtq.quantize(
                 diffusion_model,
@@ -366,25 +499,50 @@ class ModelOptQuantizeUNet:
                 forward_loop
             )
 
+            # Restore logger level
+            modelopt_logger.setLevel(original_level)
+
             # Print quantization summary to verify quantizers were inserted
             print(f"\nQuantization Summary:")
             mtq.print_quant_summary(quantized_diffusion_model)
 
-            # Debug: Check if quantizers were actually added
+            # Debug: Extensive post-quantization analysis
             from modelopt.torch.quantization.nn import TensorQuantizer
             quantizer_count = sum(1 for m in quantized_diffusion_model.modules() if isinstance(m, TensorQuantizer))
-            print(f"Debug: Found {quantizer_count} TensorQuantizer modules in quantized model")
+            print(f"\nDebug: Post-quantization analysis:")
+            print(f"  TensorQuantizer modules found: {quantizer_count}")
 
-            # Debug: Print sample of quantized layer names
+            # Check what changed in the model
+            all_modules_after = list(quantized_diffusion_model.named_modules())
+            print(f"  Total modules after quantization: {len(all_modules_after)}")
+            print(f"  Total modules before quantization: {len(list(diffusion_model.named_modules()))}")
+
             if quantizer_count > 0:
-                print(f"Debug: Sample quantized layers:")
+                print(f"\n  SUCCESS! Quantizer locations:")
                 count = 0
                 for name, module in quantized_diffusion_model.named_modules():
-                    if isinstance(module, TensorQuantizer) and count < 5:
-                        print(f"  - {name}")
+                    if isinstance(module, TensorQuantizer):
+                        if count < 15:  # Show first 15
+                            parent = '.'.join(name.split('.')[:-1])
+                            print(f"    {count+1}. {name}")
+                            print(f"       Parent: {parent}")
                         count += 1
+                        if count == quantizer_count:
+                            break
+                print(f"  ... and {quantizer_count - 15} more" if quantizer_count > 15 else "")
             else:
-                print(f"Debug: WARNING - No quantizers found! Config may not be matching layer names.")
+                print(f"\n  FAILURE: No quantizers inserted!")
+                print(f"  Possible causes:")
+                print(f"    1. Wildcard pattern mismatch")
+                print(f"    2. ModelOpt version incompatibility")
+                print(f"    3. Model structure not recognized by ModelOpt")
+                print(f"    4. 'default': False blocking all quantization")
+
+                # Try to understand what ModelOpt is seeing
+                print(f"\n  Attempting to diagnose...")
+                print(f"  Checking if model has 'forward' method: {hasattr(quantized_diffusion_model, 'forward')}")
+                print(f"  Model class: {type(quantized_diffusion_model).__name__}")
+                print(f"  Model module: {type(quantized_diffusion_model).__module__}")
 
             # Replace the diffusion model in the ComfyUI model structure
             # Clone the model patcher and replace the diffusion model
