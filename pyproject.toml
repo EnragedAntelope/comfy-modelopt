@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = {text = "MIT"}
 authors = [
-    {name = "ComfyUI ModelOpt Contributors"}
+    {name = "enragedantelope"}
 ]
 keywords = ["comfyui", "nvidia", "modelopt", "tensorrt", "quantization", "stable-diffusion", "optimization"]
 classifiers = [
@@ -73,7 +73,7 @@ target-version = ['py310', 'py311', 'py312']
 # ComfyUI Manager metadata
 display_name = "NVIDIA ModelOpt"
 description = "Quantize and optimize diffusion models with NVIDIA ModelOpt (INT8/FP8/INT4)"
-author = "ComfyUI ModelOpt Contributors"
+author = "enragedantelope"
 version = "0.2.2"
 node_list = [
     "ModelOptUNetLoader",
