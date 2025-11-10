@@ -500,16 +500,27 @@ class ModelOptQuantizeUNet:
             if builtin_cfg:
                 print(f"\nDebug: Also testing with ModelOpt's built-in FP8/INT8 config...")
                 try:
-                    test_builtin_model = mtq.quantize(diffusion_model, builtin_cfg, lambda m: None)
+                    # Make a copy of the model for testing to avoid double-quantization
+                    import copy
+                    test_builtin_model = copy.deepcopy(diffusion_model)
+                    test_builtin_model = mtq.quantize(test_builtin_model, builtin_cfg, lambda m: None)
                     from modelopt.torch.quantization.nn import TensorQuantizer
                     builtin_test_count = sum(1 for m in test_builtin_model.modules() if isinstance(m, TensorQuantizer))
                     print(f"  Built-in config result: {builtin_test_count} quantizers")
                     if builtin_test_count > 0:
-                        print(f"  SUCCESS with built-in config! Using that instead.")
-                        # Use the built-in config for actual quantization
-                        quant_cfg = builtin_cfg
+                        print(f"  SUCCESS with built-in config!")
+                        print(f"  Skipping further tests - will use built-in config for actual quantization.")
+                        # Don't set quant_cfg here - we'll use it later with a fresh model
+                        use_builtin_cfg = True
+                    else:
+                        use_builtin_cfg = False
+                    # Clean up test model
+                    del test_builtin_model
                 except Exception as e:
                     print(f"  Built-in config test failed: {str(e)[:200]}")
+                    use_builtin_cfg = False
+            else:
+                use_builtin_cfg = False
 
             # LAST RESORT: Try manually adding quantizer to one module to test API
             print(f"\nDebug: Testing manual quantizer insertion...")
@@ -539,37 +550,47 @@ class ModelOptQuantizeUNet:
             except ImportError as e:
                 print(f"  Could not import TensorQuantizer: {str(e)[:200]}")
 
-            try:
-                # Try quantizing with the permissive config (no forward loop, just see if quantizers insert)
-                print(f"  Attempting test quantization (this will fail during calibration, but we just want to see if quantizers insert)...")
-                test_model = mtq.quantize(diffusion_model, test_cfg, lambda m: None)
-
-                # Check if ANY quantizers were inserted
-                from modelopt.torch.quantization.nn import TensorQuantizer
-                test_quantizer_count = sum(1 for m in test_model.modules() if isinstance(m, TensorQuantizer))
-                print(f"  Test result: {test_quantizer_count} TensorQuantizers inserted with permissive config")
-
-                if test_quantizer_count > 0:
-                    print(f"  SUCCESS: Permissive config works! Issue is with wildcard matching.")
-                    print(f"  Sample quantizer locations:")
-                    count = 0
-                    for name, module in test_model.named_modules():
-                        if isinstance(module, TensorQuantizer) and count < 10:
-                            # Get parent module name
-                            parent_name = '.'.join(name.split('.')[:-1]) if '.' in name else 'root'
-                            print(f"    - {name} (parent: {parent_name})")
-                            count += 1
-                else:
-                    print(f"  FAILURE: Even permissive config doesn't work. Deeper issue with ModelOpt/model compatibility.")
-            except Exception as e:
-                print(f"  Test quantization exception (expected): {str(e)[:200]}")
-                # Still check if quantizers were inserted despite the error
-                from modelopt.torch.quantization.nn import TensorQuantizer
+            # Skip permissive config test if built-in already worked
+            if not use_builtin_cfg:
                 try:
+                    # Try quantizing with the permissive config (no forward loop, just see if quantizers insert)
+                    print(f"  Attempting test quantization (this will fail during calibration, but we just want to see if quantizers insert)...")
+                    import copy
+                    test_model = copy.deepcopy(diffusion_model)
+                    test_model = mtq.quantize(test_model, test_cfg, lambda m: None)
+
+                    # Check if ANY quantizers were inserted
+                    from modelopt.torch.quantization.nn import TensorQuantizer
                     test_quantizer_count = sum(1 for m in test_model.modules() if isinstance(m, TensorQuantizer))
-                    print(f"  Quantizers inserted before error: {test_quantizer_count}")
-                except:
-                    print(f"  Could not check quantizer count after error")
+                    print(f"  Test result: {test_quantizer_count} TensorQuantizers inserted with permissive config")
+
+                    if test_quantizer_count > 0:
+                        print(f"  SUCCESS: Permissive config works! Issue is with wildcard matching.")
+                        print(f"  Sample quantizer locations:")
+                        count = 0
+                        for name, module in test_model.named_modules():
+                            if isinstance(module, TensorQuantizer) and count < 10:
+                                # Get parent module name
+                                parent_name = '.'.join(name.split('.')[:-1]) if '.' in name else 'root'
+                                print(f"    - {name} (parent: {parent_name})")
+                                count += 1
+                    else:
+                        print(f"  FAILURE: Even permissive config doesn't work. Deeper issue with ModelOpt/model compatibility.")
+
+                    # Clean up test model
+                    del test_model
+                except Exception as e:
+                    print(f"  Test quantization exception (expected): {str(e)[:200]}")
+                    # Still check if quantizers were inserted despite the error
+                    from modelopt.torch.quantization.nn import TensorQuantizer
+                    try:
+                        test_quantizer_count = sum(1 for m in test_model.modules() if isinstance(m, TensorQuantizer))
+                        print(f"  Quantizers inserted before error: {test_quantizer_count}")
+                        del test_model
+                    except:
+                        print(f"  Could not check quantizer count after error")
+            else:
+                print(f"  Skipped permissive config test - built-in config already works!")
 
             print(f"\n" + "="*60)
             print(f"Now running ACTUAL quantization with diffusion config...")
@@ -599,9 +620,17 @@ class ModelOptQuantizeUNet:
             if relevant_env_vars:
                 print(f"  Relevant env vars: {relevant_env_vars}")
 
+            # Use built-in config if test showed it works, otherwise use our custom config
+            if use_builtin_cfg:
+                print(f"\n  Using ModelOpt's built-in FP8_DEFAULT_CFG (test showed it works)")
+                final_config = builtin_cfg
+            else:
+                print(f"\n  Using custom diffusion config")
+                final_config = quant_cfg
+
             quantized_diffusion_model = mtq.quantize(
                 diffusion_model,
-                quant_cfg,
+                final_config,
                 forward_loop
             )
 
