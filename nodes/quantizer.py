@@ -153,80 +153,8 @@ class ModelOptQuantizeUNet:
                 for layer_name in skip_layer_list:
                     quant_cfg["quant_cfg"][f"*{layer_name}*"] = {"enable": False}
 
-            # Prepare calibration data
-            print(f"Preparing calibration data...")
-            if calibration_data is not None:
-                # Use provided calibration latents
-                calib_latents = calibration_data["samples"]
-            else:
-                # Generate random calibration data
-                # Determine latent shape based on model type
-                latent_shape = self._get_latent_shape(base_model)
-                calib_latents = torch.randn(
-                    calibration_steps,
-                    *latent_shape,
-                    device=comfy.model_management.get_torch_device()
-                )
-                print(f"  Using random calibration data: {calib_latents.shape}")
-
-            # Define calibration forward loop
-            def forward_loop(diffusion_model_to_calibrate):
-                """Calibration forward pass for the diffusion model"""
-                print(f"Running calibration...")
-                device = comfy.model_management.get_torch_device()
-
-                with torch.no_grad():
-                    for i in range(min(calibration_steps, len(calib_latents))):
-                        if i % 10 == 0:
-                            print(f"  Step {i}/{calibration_steps}")
-
-                        # Get latent sample
-                        if calibration_data is not None:
-                            latent = calib_latents[i:i+1].to(device)
-                        else:
-                            latent = calib_latents[i:i+1]
-
-                        # Create dummy timestep and context
-                        # Timestep as tensor for diffusion models
-                        timestep = torch.tensor([999.0], device=device)
-
-                        # Context dimensions vary by model
-                        # Try to detect appropriate context size
-                        context_dim = getattr(diffusion_model_to_calibrate, 'context_dim', 768)
-                        context = torch.randn(1, 77, context_dim, device=device)
-
-                        # SDXL and some models need 'y' parameter (pooled text embeddings)
-                        # Create dummy pooled embeddings (adm in SDXL parlance)
-                        y_dim = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
-                        if y_dim is None:
-                            # Try alternative attribute names
-                            y_dim = getattr(diffusion_model_to_calibrate, 'y_dim', 1280)  # SDXL default
-                        y = torch.randn(1, y_dim, device=device)
-
-                        # Forward pass - try different signatures
-                        try:
-                            # Try with y parameter first (SDXL, SD3)
-                            _ = diffusion_model_to_calibrate(latent, timestep, context, y=y)
-                        except TypeError as e:
-                            if "unexpected keyword argument 'y'" in str(e):
-                                # Model doesn't use y, try without it (SD1.5)
-                                try:
-                                    _ = diffusion_model_to_calibrate(latent, timestep, context)
-                                except Exception as e2:
-                                    print(f"  Warning: Calibration step {i} failed: {e2}")
-                            else:
-                                # Some other error, try alternative signatures
-                                try:
-                                    _ = diffusion_model_to_calibrate(x=latent, timesteps=timestep, context=context, y=y)
-                                except Exception as e3:
-                                    print(f"  Warning: Calibration step {i} failed: {e3}")
-                        except Exception as e:
-                            print(f"  Warning: Calibration step {i} failed: {e}")
-
-                print(f"  Calibration complete!")
-
             # Quantize the diffusion model
-            print(f"\nQuantizing diffusion model to {precision.upper()}...")
+            print(f"\nPreparing model for quantization to {precision.upper()}...")
             print(f"This may take several minutes...")
 
             # Debug: Print model info
@@ -252,6 +180,93 @@ class ModelOptQuantizeUNet:
             # Verify all parameters are on the same device
             devices = {p.device for p in diffusion_model.parameters()}
             print(f"Debug: Model parameters are on devices: {devices}")
+
+            # CRITICAL: Convert to FP32 for quantization
+            # ModelOpt quantization requires FP32 input models
+            original_dtype = next(diffusion_model.parameters()).dtype
+            print(f"Debug: Original model dtype: {original_dtype}")
+            if original_dtype != torch.float32:
+                print(f"Debug: Converting model to FP32 for quantization...")
+                diffusion_model = diffusion_model.to(torch.float32)
+                print(f"Debug: Model converted to FP32")
+
+            # Now detect model dtype for calibration (should be FP32 after conversion)
+            model_dtype = next(diffusion_model.parameters()).dtype
+            print(f"Preparing calibration data (dtype: {model_dtype})...")
+
+            if calibration_data is not None:
+                # Use provided calibration latents
+                calib_latents = calibration_data["samples"]
+            else:
+                # Generate random calibration data
+                # Determine latent shape based on model type
+                latent_shape = self._get_latent_shape(base_model)
+                calib_latents = torch.randn(
+                    calibration_steps,
+                    *latent_shape,
+                    device=device,
+                    dtype=model_dtype  # Match model dtype (FP32)
+                )
+                print(f"  Using random calibration data: {calib_latents.shape}")
+
+            # Define calibration forward loop
+            def forward_loop(diffusion_model_to_calibrate):
+                """Calibration forward pass for the diffusion model"""
+                print(f"Running calibration...")
+                # Get model dtype
+                model_dtype = next(diffusion_model_to_calibrate.parameters()).dtype
+
+                with torch.no_grad():
+                    for i in range(min(calibration_steps, len(calib_latents))):
+                        if i % 10 == 0:
+                            print(f"  Step {i}/{calibration_steps}")
+
+                        # Get latent sample
+                        if calibration_data is not None:
+                            latent = calib_latents[i:i+1].to(device, dtype=model_dtype)
+                        else:
+                            latent = calib_latents[i:i+1]
+
+                        # Create dummy timestep and context with matching dtype
+                        # Timestep as tensor for diffusion models
+                        timestep = torch.tensor([999.0], device=device, dtype=model_dtype)
+
+                        # Context dimensions vary by model
+                        # Try to detect appropriate context size
+                        context_dim = getattr(diffusion_model_to_calibrate, 'context_dim', 768)
+                        context = torch.randn(1, 77, context_dim, device=device, dtype=model_dtype)
+
+                        # SDXL and some models need 'y' parameter (pooled text embeddings)
+                        # Create dummy pooled embeddings (adm in SDXL parlance)
+                        y_dim = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
+                        if y_dim is None:
+                            # Try alternative attribute names
+                            y_dim = getattr(diffusion_model_to_calibrate, 'y_dim', 1280)  # SDXL default
+                        y = torch.randn(1, y_dim, device=device, dtype=model_dtype)
+
+                        # Forward pass - try different signatures
+                        try:
+                            # Try with y parameter first (SDXL, SD3)
+                            _ = diffusion_model_to_calibrate(latent, timestep, context, y=y)
+                        except TypeError as e:
+                            if "unexpected keyword argument 'y'" in str(e):
+                                # Model doesn't use y, try without it (SD1.5)
+                                try:
+                                    _ = diffusion_model_to_calibrate(latent, timestep, context)
+                                except Exception as e2:
+                                    print(f"  Warning: Calibration step {i} failed: {e2}")
+                            else:
+                                # Some other error, try alternative signatures
+                                try:
+                                    _ = diffusion_model_to_calibrate(x=latent, timesteps=timestep, context=context, y=y)
+                                except Exception as e3:
+                                    print(f"  Warning: Calibration step {i} failed: {e3}")
+                        except Exception as e:
+                            print(f"  Warning: Calibration step {i} failed: {e}")
+
+                print(f"  Calibration complete!")
+
+            print(f"\nRunning ModelOpt quantization...")
 
             quantized_diffusion_model = mtq.quantize(
                 diffusion_model,
