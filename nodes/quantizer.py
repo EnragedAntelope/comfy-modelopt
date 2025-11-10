@@ -310,9 +310,31 @@ class ModelOptQuantizeUNet:
                 print(f"    Is subclass of torch.nn.Conv2d: {issubclass(type(module), torch.nn.Conv2d)}")
                 print(f"    MRO: {[c.__name__ for c in type(module).__mro__[:5]]}")
 
+            # CRITICAL FIX: Replace ComfyUI's wrapped modules with standard PyTorch
+            # ComfyUI uses comfy.ops.disable_weight_init.Linear/Conv2d which ModelOpt doesn't recognize
+            print(f"\nCRITICAL FIX: Unwrapping ComfyUI custom modules...")
+            unwrapped_count = self._unwrap_comfy_ops(diffusion_model)
+            print(f"  Replaced {unwrapped_count} ComfyUI wrapped modules with standard PyTorch")
+
+            # Verify replacement worked
+            verify_linear = None
+            for name, module in diffusion_model.named_modules():
+                if isinstance(module, torch.nn.Linear):
+                    verify_linear = (name, module)
+                    break
+            if verify_linear:
+                name, module = verify_linear
+                print(f"  Verification - Sample Linear: {name}")
+                print(f"    Type: {type(module)}")
+                print(f"    Is torch.nn.Linear: {type(module) == torch.nn.Linear}")
+                if type(module) != torch.nn.Linear:
+                    print(f"    WARNING: Still wrapped! Type mismatch.")
+                else:
+                    print(f"    SUCCESS: Now standard PyTorch module!")
+
             # CRITICAL: Ensure model is fully on GPU and in eval mode for ModelOpt
             device = comfy.model_management.get_torch_device()
-            print(f"Debug: Moving model to {device} and setting eval mode...")
+            print(f"\nDebug: Moving model to {device} and setting eval mode...")
 
             # Move model to GPU (ComfyUI may have offloaded parts to CPU)
             diffusion_model = diffusion_model.to(device)
@@ -653,6 +675,111 @@ class ModelOptQuantizeUNet:
                 f"• Missing ModelOpt dependencies\n\n"
                 f"Check console for detailed error trace."
             )
+
+    def _unwrap_comfy_ops(self, model):
+        """
+        Replace ComfyUI's wrapped modules (comfy.ops.disable_weight_init.Linear/Conv2d)
+        with standard torch.nn modules so ModelOpt can recognize them.
+
+        Returns:
+            int: Number of modules replaced
+        """
+        replaced_count = 0
+
+        # Recursively walk through all modules
+        # We need to replace modules in their parent's _modules dict
+        def replace_in_module(parent_module):
+            nonlocal replaced_count
+
+            # Check each child module (stored in _modules dict)
+            for child_name in list(parent_module._modules.keys()):
+                child = parent_module._modules[child_name]
+
+                if child is None:
+                    continue
+
+                # Check if this child is a ComfyUI wrapped module
+                child_module_path = child.__class__.__module__
+
+                # Replace comfy.ops wrapped Linear
+                if child_module_path == 'comfy.ops.disable_weight_init' and isinstance(child, torch.nn.Linear):
+                    standard_linear = torch.nn.Linear(
+                        in_features=child.in_features,
+                        out_features=child.out_features,
+                        bias=child.bias is not None,
+                        device=child.weight.device,
+                        dtype=child.weight.dtype
+                    )
+
+                    # Copy weights and biases
+                    with torch.no_grad():
+                        standard_linear.weight.copy_(child.weight)
+                        if child.bias is not None:
+                            standard_linear.bias.copy_(child.bias)
+
+                    # Replace in parent's _modules dict
+                    parent_module._modules[child_name] = standard_linear
+                    replaced_count += 1
+
+                # Replace comfy.ops wrapped Conv2d
+                elif child_module_path == 'comfy.ops.disable_weight_init' and isinstance(child, torch.nn.Conv2d):
+                    standard_conv = torch.nn.Conv2d(
+                        in_channels=child.in_channels,
+                        out_channels=child.out_channels,
+                        kernel_size=child.kernel_size,
+                        stride=child.stride,
+                        padding=child.padding,
+                        dilation=child.dilation,
+                        groups=child.groups,
+                        bias=child.bias is not None,
+                        padding_mode=child.padding_mode,
+                        device=child.weight.device,
+                        dtype=child.weight.dtype
+                    )
+
+                    # Copy weights and biases
+                    with torch.no_grad():
+                        standard_conv.weight.copy_(child.weight)
+                        if child.bias is not None:
+                            standard_conv.bias.copy_(child.bias)
+
+                    # Replace in parent's _modules dict
+                    parent_module._modules[child_name] = standard_conv
+                    replaced_count += 1
+
+                # Replace comfy.ops wrapped Conv1d (if exists)
+                elif child_module_path == 'comfy.ops.disable_weight_init' and isinstance(child, torch.nn.Conv1d):
+                    standard_conv1d = torch.nn.Conv1d(
+                        in_channels=child.in_channels,
+                        out_channels=child.out_channels,
+                        kernel_size=child.kernel_size,
+                        stride=child.stride,
+                        padding=child.padding,
+                        dilation=child.dilation,
+                        groups=child.groups,
+                        bias=child.bias is not None,
+                        padding_mode=child.padding_mode,
+                        device=child.weight.device,
+                        dtype=child.weight.dtype
+                    )
+
+                    with torch.no_grad():
+                        standard_conv1d.weight.copy_(child.weight)
+                        if child.bias is not None:
+                            standard_conv1d.bias.copy_(child.bias)
+
+                    # Replace in parent's _modules dict
+                    parent_module._modules[child_name] = standard_conv1d
+                    replaced_count += 1
+
+                else:
+                    # Recursively process child's children
+                    replace_in_module(child)
+
+        # Start recursive replacement from top
+        replace_in_module(model)
+
+        return replaced_count
 
     def _get_latent_shape(self, model):
         """Determine latent shape based on model architecture"""
