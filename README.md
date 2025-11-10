@@ -1,6 +1,6 @@
 # NVIDIA ModelOpt for ComfyUI
 
-Quantize and optimize Stable Diffusion models (SDXL, SD1.5, SD3) with NVIDIA ModelOpt directly in ComfyUI. Achieve **~2x faster inference** with INT8/FP8 quantization while maintaining image quality.
+Quantize and optimize Stable Diffusion models with NVIDIA ModelOpt directly in ComfyUI. Achieve **~2x faster inference** with INT8/FP8 quantization while maintaining image quality. Works with various diffusion model architectures including SDXL, SD1.5, SD3, and more.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -52,7 +52,7 @@ pip install --upgrade nvidia-modelopt[all]
 
 **Recommended for best experience**:
 - **GPU**: RTX 4070+ (for FP8 support)
-- **VRAM**: 12GB+ for SDXL, 8GB+ for SD1.5
+- **VRAM**: 8GB+ (12GB+ recommended for larger models)
 - **System RAM**: 16GB+ (32GB+ recommended)
 
 ### Software Requirements
@@ -135,7 +135,7 @@ For best quality, use real latent samples instead of random calibration:
 
 See the `examples/` folder for ready-to-use workflow JSON files:
 
-- `quantize_sdxl_basic.json` - Basic SDXL quantization
+- `quantize_basic.json` - Basic model quantization workflow
 - `quantize_with_calibration.json` - Advanced calibration workflow
 - `load_quantized_model.json` - Using quantized models
 
@@ -204,7 +204,7 @@ See the `examples/` folder for ready-to-use workflow JSON files:
 - Reduce `calibration_steps` (try 16 or 32)
 - Close other applications
 - Use INT4 for maximum VRAM savings
-- Upgrade GPU or use smaller model (SD1.5 instead of SDXL)
+- Try a smaller/more efficient model architecture if available
 
 ### "Quantization is very slow"
 - Install Triton (Linux): `pip install triton`
@@ -219,7 +219,9 @@ See the `examples/` folder for ready-to-use workflow JSON files:
 
 ## 📊 Performance Benchmarks
 
-**SDXL on RTX 4090** (1024x1024, 20 steps):
+Example benchmarks demonstrate typical performance improvements:
+
+**Example: SDXL-based model on RTX 4090** (1024x1024, 20 steps):
 
 | Configuration | Time/Image | VRAM | Quality |
 |---------------|------------|------|---------|
@@ -227,14 +229,14 @@ See the `examples/` folder for ready-to-use workflow JSON files:
 | INT8 quantized | 1.7s | ~4GB | ~98% |
 | FP8 quantized | 1.6s | ~4GB | ~99% |
 
-**SD1.5 on RTX 3080** (512x512, 20 steps):
+**Example: SD1.5-based model on RTX 3080** (512x512, 20 steps):
 
 | Configuration | Time/Image | VRAM | Quality |
 |---------------|------------|------|---------|
 | FP16 (baseline) | 1.1s | ~4GB | 100% |
 | INT8 quantized | 0.6s | ~2GB | ~97% |
 
-*Note: Performance varies by GPU, resolution, and workflow complexity.*
+*Note: Performance varies significantly by model architecture, GPU, resolution, and workflow complexity. These are example benchmarks only.*
 
 ## ⚠️ Limitations
 

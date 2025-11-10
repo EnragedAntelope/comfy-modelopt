@@ -136,13 +136,37 @@ class ModelOptQuantizeUNet:
                 print(f"Skipping layers: {skip_layer_list}")
 
             # Select quantization config
-            print(f"\nPreparing quantization config...")
+            # NOTE: Default configs (INT8_DEFAULT_CFG, FP8_DEFAULT_CFG) are for LLMs
+            # Diffusion models (UNet CNNs) need custom configs
+            print(f"\nPreparing quantization config for diffusion model...")
+
             if precision == "int8":
-                quant_cfg = mtq.INT8_DEFAULT_CFG
+                quant_cfg = {
+                    "quant_cfg": {
+                        "*weight_quantizer": {"num_bits": 8, "axis": 0},
+                        "*input_quantizer": {"num_bits": 8, "axis": None},
+                        "*output_quantizer": {"enable": False},  # Disable output quantization
+                    },
+                    "algorithm": "max",
+                }
             elif precision == "fp8":
-                quant_cfg = mtq.FP8_DEFAULT_CFG
+                quant_cfg = {
+                    "quant_cfg": {
+                        "*weight_quantizer": {"num_bits": (4, 3), "axis": None},
+                        "*input_quantizer": {"num_bits": (4, 3), "axis": None},
+                        "*output_quantizer": {"enable": False},  # Disable output quantization
+                    },
+                    "algorithm": "max",
+                }
             elif precision == "int4":
-                quant_cfg = mtq.INT4_AWQ_CFG
+                quant_cfg = {
+                    "quant_cfg": {
+                        "*weight_quantizer": {"num_bits": 4, "axis": 0},
+                        "*input_quantizer": {"num_bits": 8, "axis": None},  # Keep activations at INT8
+                        "*output_quantizer": {"enable": False},
+                    },
+                    "algorithm": "awq_lite",
+                }
             else:
                 raise ValueError(f"Unsupported precision: {precision}")
 
@@ -216,6 +240,19 @@ class ModelOptQuantizeUNet:
                 # Get model dtype
                 model_dtype = next(diffusion_model_to_calibrate.parameters()).dtype
 
+                # Debug: Detect y dimension once before loop
+                y_dim_detected = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
+                if y_dim_detected is None:
+                    y_dim_detected = getattr(diffusion_model_to_calibrate, 'y_dim', None)
+                if y_dim_detected is None and hasattr(diffusion_model_to_calibrate, 'label_emb'):
+                    if hasattr(diffusion_model_to_calibrate.label_emb, 'in_features'):
+                        y_dim_detected = diffusion_model_to_calibrate.label_emb.in_features
+                    elif hasattr(diffusion_model_to_calibrate.label_emb, '0'):
+                        first_layer = diffusion_model_to_calibrate.label_emb[0]
+                        if hasattr(first_layer, 'in_features'):
+                            y_dim_detected = first_layer.in_features
+                print(f"Debug: Detected y_dim = {y_dim_detected}")
+
                 with torch.no_grad():
                     for i in range(min(calibration_steps, len(calib_latents))):
                         if i % 10 == 0:
@@ -241,7 +278,22 @@ class ModelOptQuantizeUNet:
                         y_dim = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
                         if y_dim is None:
                             # Try alternative attribute names
-                            y_dim = getattr(diffusion_model_to_calibrate, 'y_dim', 1280)  # SDXL default
+                            y_dim = getattr(diffusion_model_to_calibrate, 'y_dim', None)
+                        if y_dim is None:
+                            # Try to infer from label_emb or time_embed layers
+                            if hasattr(diffusion_model_to_calibrate, 'label_emb'):
+                                # Check the input dimension of label_emb
+                                if hasattr(diffusion_model_to_calibrate.label_emb, 'in_features'):
+                                    y_dim = diffusion_model_to_calibrate.label_emb.in_features
+                                elif hasattr(diffusion_model_to_calibrate.label_emb, '0'):
+                                    # Sequential module
+                                    first_layer = diffusion_model_to_calibrate.label_emb[0]
+                                    if hasattr(first_layer, 'in_features'):
+                                        y_dim = first_layer.in_features
+                        if y_dim is None:
+                            # Default to common SDXL size
+                            y_dim = 1280
+
                         y = torch.randn(1, y_dim, device=device, dtype=model_dtype)
 
                         # Forward pass - try different signatures
@@ -273,6 +325,10 @@ class ModelOptQuantizeUNet:
                 quant_cfg,
                 forward_loop
             )
+
+            # Print quantization summary to verify quantizers were inserted
+            print(f"\nQuantization Summary:")
+            mtq.print_quant_summary(quantized_diffusion_model)
 
             # Replace the diffusion model in the ComfyUI model structure
             # Clone the model patcher and replace the diffusion model
