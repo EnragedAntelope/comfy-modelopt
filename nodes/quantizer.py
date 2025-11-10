@@ -195,22 +195,49 @@ class ModelOptQuantizeUNet:
                         context_dim = getattr(diffusion_model_to_calibrate, 'context_dim', 768)
                         context = torch.randn(1, 77, context_dim, device=device)
 
-                        # Forward pass - diffusion models typically accept (x, timesteps, context, **kwargs)
+                        # SDXL and some models need 'y' parameter (pooled text embeddings)
+                        # Create dummy pooled embeddings (adm in SDXL parlance)
+                        y_dim = getattr(diffusion_model_to_calibrate, 'adm_in_channels', None)
+                        if y_dim is None:
+                            # Try alternative attribute names
+                            y_dim = getattr(diffusion_model_to_calibrate, 'y_dim', 1280)  # SDXL default
+                        y = torch.randn(1, y_dim, device=device)
+
+                        # Forward pass - try different signatures
                         try:
-                            _ = diffusion_model_to_calibrate(latent, timestep, context)
+                            # Try with y parameter first (SDXL, SD3)
+                            _ = diffusion_model_to_calibrate(latent, timestep, context, y=y)
+                        except TypeError as e:
+                            if "unexpected keyword argument 'y'" in str(e):
+                                # Model doesn't use y, try without it (SD1.5)
+                                try:
+                                    _ = diffusion_model_to_calibrate(latent, timestep, context)
+                                except Exception as e2:
+                                    print(f"  Warning: Calibration step {i} failed: {e2}")
+                            else:
+                                # Some other error, try alternative signatures
+                                try:
+                                    _ = diffusion_model_to_calibrate(x=latent, timesteps=timestep, context=context, y=y)
+                                except Exception as e3:
+                                    print(f"  Warning: Calibration step {i} failed: {e3}")
                         except Exception as e:
-                            # Try alternative signature if first fails
-                            try:
-                                _ = diffusion_model_to_calibrate(x=latent, timesteps=timestep, context=context)
-                            except Exception as e2:
-                                print(f"  Warning: Calibration step {i} failed: {e2}")
-                                # Continue with other steps
+                            print(f"  Warning: Calibration step {i} failed: {e}")
 
                 print(f"  Calibration complete!")
 
             # Quantize the diffusion model
             print(f"\nQuantizing diffusion model to {precision.upper()}...")
             print(f"This may take several minutes...")
+
+            # Debug: Print model info
+            print(f"Debug: Model type: {type(diffusion_model).__name__}")
+            param_count = sum(p.numel() for p in diffusion_model.parameters())
+            print(f"Debug: Total parameters: {param_count:,}")
+
+            # Check for quantizable layers
+            linear_count = sum(1 for m in diffusion_model.modules() if isinstance(m, torch.nn.Linear))
+            conv_count = sum(1 for m in diffusion_model.modules() if isinstance(m, torch.nn.Conv2d))
+            print(f"Debug: Linear layers: {linear_count}, Conv2d layers: {conv_count}")
 
             quantized_diffusion_model = mtq.quantize(
                 diffusion_model,
