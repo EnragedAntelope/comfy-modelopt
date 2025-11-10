@@ -1,0 +1,36 @@
+# ComfyUI ModelOpt Integration Requirements
+# Python 3.10-3.12 required
+
+# Core Dependencies
+# PyTorch with CUDA support (install separately with specific CUDA version)
+# Install PyTorch first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# NVIDIA ModelOpt (includes quantization and optimization tools)
+nvidia-modelopt[all]>=0.27.0
+
+# Optional but recommended dependencies
+triton>=2.0.0  # Accelerated quantization for SM 8.9+ GPUs
+
+# TensorRT for engine deployment (optional, for TensorRT engine support)
+# Note: TensorRT installation varies by platform
+# tensorrt>=8.6.0
+
+# Accelerate for memory-efficient loading
+accelerate>=0.20.0
+
+# Additional utilities
+safetensors>=0.3.0  # For safetensors format support
+onnx>=1.14.0  # For ONNX model support
+onnxruntime>=1.15.0  # ONNX Runtime (CPU)
+# onnxruntime-gpu>=1.15.0  # ONNX Runtime with GPU support (alternative to CPU)
+
+# Hugging Face libraries (for model loading)
+transformers>=4.30.0
+diffusers>=0.20.0
+
+# Development dependencies (optional)
+# pytest>=7.0.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.0.0
