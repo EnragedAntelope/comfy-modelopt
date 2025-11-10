@@ -219,6 +219,63 @@ def unwrap_comfy_ops(model):
 
 **Side Effect**: Breaks tools expecting exact `torch.nn.Linear` type.
 
+### Save/Load Architecture Issue
+
+**The Problem**: Quantized models have **two components** that must be saved:
+
+1. **Model Weights** (quantized tensors: INT8/FP8/INT4)
+2. **Quantizer Infrastructure** (TensorQuantizer layers, scales, zero-points)
+
+**Current Implementation (BROKEN)**:
+
+```python
+# Save node (nodes/quantizer.py:898)
+state_dict = model.model.state_dict()  # ❌ Only saves weights
+torch.save(state_dict, path)
+
+# Load node (nodes/loader.py:226)
+sd = comfy.utils.load_torch_file(path)
+model = comfy.sd.load_model_weights(sd, "")  # ❌ Creates ComfyUI wrapped modules
+```
+
+**What Happens**:
+- Save: TensorQuantizer state is lost (not part of standard state_dict)
+- Load: Creates fresh ComfyUI model with wrapped `comfy.ops.Linear`
+- Result: Quantized weights loaded into non-quantized architecture
+- Outcome: Model may run but won't use quantization optimizations
+
+**Correct Implementation (ModelOpt Functions)**:
+
+```python
+import modelopt.torch.opt as mto
+
+# Save (preserves both weights AND quantizer state)
+mto.save(model, "quantized_model.pth")
+
+# Load (reconstructs quantizer infrastructure)
+base_model = create_base_model()  # Native PyTorch model
+mto.restore(base_model, "quantized_model.pth")
+```
+
+**Alternative (Separate State)**:
+
+```python
+# Save
+torch.save(mto.modelopt_state(model), "modelopt_state.pth")
+torch.save(model.state_dict(), "weights.pth")
+
+# Load
+base_model = create_base_model()
+mto.restore_from_modelopt_state(base_model, torch.load("modelopt_state.pth"))
+base_model.load_state_dict(torch.load("weights.pth"))
+```
+
+**Additional Complexity for ComfyUI**:
+- ModelOpt expects **native PyTorch** models (torch.nn.Linear)
+- ComfyUI expects **wrapped modules** (comfy.ops.Linear)
+- Need adapter layer to bridge these two worlds
+- May require custom ModelPatcher that handles unwrapped quantized models
+
 ---
 
 ## ⚠️ KNOWN LIMITATIONS
@@ -230,11 +287,26 @@ def unwrap_comfy_ops(model):
    - Solution: Module unwrapping (_unwrap_comfy_ops)
    - Status: WORKING - 794 modules unwrapped, 2382 quantizers inserted
 
-2. **No Verification of Quantization Quality**
+2. **Save/Load Pipeline BROKEN** ❌ CRITICAL
+   - **Problem**: Current implementation loses quantizer infrastructure
+   - Save node uses `state_dict()` - only saves weights, not TensorQuantizers
+   - Load node uses `comfy.sd.load_model_weights()` - creates ComfyUI wrapped modules
+   - **Result**: Loaded model has quantized weights but no quantization runtime
+   - **Solution Required**: Use `mto.save()` and `mto.restore()` (ModelOpt functions)
+   - **Impact**: Saved quantized models cannot be loaded/used correctly
+   - **Status**: Needs complete rewrite of save/load nodes
+
+3. **Model Type Mismatch in Loader**
+   - Quantization requires **native PyTorch** (`torch.nn.Linear/Conv2d`)
+   - Current loader creates **ComfyUI wrapped modules** (`comfy.ops.Linear`)
+   - Fundamental architecture incompatibility
+   - May need to bypass ComfyUI's model loading for quantized models
+
+4. **No Verification of Quantization Quality**
    - Even if quantization works, no validation that output quality is acceptable
    - Need to add: PSNR, SSIM, or visual comparison tests
 
-3. **No Support for Non-UNet Components**
+5. **No Support for Non-UNet Components**
    - VAE: Not quantizable (per ModelOpt design)
    - CLIP: Not quantizable
    - Only UNet backbone can be quantized
@@ -257,7 +329,23 @@ def unwrap_comfy_ops(model):
 
 ## 🎯 NEXT STEPS
 
-### Immediate Testing (Current Priority)
+### Critical Fixes Required
+
+1. **Fix Save/Load Pipeline** ❌ BLOCKING
+   - **Current**: Uses `state_dict()` and `comfy.sd.load_model_weights()` - BROKEN
+   - **Required**: Implement `mto.save()` and `mto.restore()` functions
+   - **Challenges**:
+     - Need to create base model architecture for `mto.restore()`
+     - ModelOpt expects native PyTorch, ComfyUI provides wrapped modules
+     - May need custom model reconstruction logic
+     - Integration with ComfyUI's ModelPatcher system
+   - **Approach Options**:
+     - A) Save with `mto.save()`, load with `mto.restore()`, then wrap for ComfyUI
+     - B) Save modelopt_state separately, implement custom loader
+     - C) Export to TensorRT for deployment (bypasses load issues)
+   - **Priority**: HIGH - Without this, quantized models cannot be reused
+
+### Immediate Testing (After Save/Load Fix)
 
 1. **Complete Full Calibration Run** ✓ Ready
    - Module unwrapping: ✅ Working
@@ -267,14 +355,45 @@ def unwrap_comfy_ops(model):
    - Alternative: Reduce to 32-64 steps if needed
 
 2. **Test Image Generation Quality**
-   - Generate test images with quantized model
+   - Generate test images with quantized model (in same session)
    - Compare with unquantized baseline
    - Document quality vs performance tradeoffs
+   - NOTE: Must test before saving due to save/load issues
 
-3. **Save and Load Quantized Model**
-   - Test ModelOptSaveQuantized node
-   - Test ModelOptUNetLoader with saved model
-   - Verify end-to-end pipeline
+3. **Test Save/Load Pipeline** (After implementing fix)
+   - Verify `mto.save()` preserves quantizer infrastructure
+   - Verify `mto.restore()` reconstructs quantizers correctly
+   - Test integration with ComfyUI's execution pipeline
+   - Verify end-to-end: quantize → save → load → inference
+
+### Alternative Deployment Path: TensorRT Export
+
+**Concept**: Instead of save/load within PyTorch, export to TensorRT for optimized inference.
+
+**Advantages**:
+- Bypasses save/load compatibility issues entirely
+- Maximum performance (TensorRT optimizations)
+- Production-ready deployment path
+- Officially supported by NVIDIA
+
+**Implementation**:
+```python
+# After quantization and calibration
+import modelopt.torch.export as mte
+mte.export_to_tensorrt(
+    model,
+    export_path="model.trt",
+    input_shapes={"latent": (1, 4, 128, 128), "timestep": (1,), ...}
+)
+```
+
+**Challenges**:
+- TensorRT integration with ComfyUI workflow
+- Need TensorRT runtime in ComfyUI
+- Input/output handling for dynamic shapes
+- May require separate TRT loader node
+
+**Priority**: MEDIUM - Good long-term solution, but needs research
 
 ### Future Improvements
 
