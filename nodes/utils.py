@@ -138,7 +138,7 @@ def check_precision_compatibility(precision, compute_capability=None):
     Check if a quantization precision is compatible with the current GPU.
 
     Args:
-        precision (str): Quantization precision ('fp8', 'int8', 'int4', 'nvfp4')
+        precision (str): Quantization precision ('fp8', 'int8', 'int4', 'nvfp4', 'mxfp8')
         compute_capability (float): GPU compute capability (auto-detected if None)
 
     Returns:
@@ -162,6 +162,7 @@ def check_precision_compatibility(precision, compute_capability=None):
         'int8': (7.5, "Turing (RTX 20-series, T4) or newer"),
         'int4': (7.5, "Turing (RTX 20-series, T4) or newer"),
         'nvfp4': (12.0, "Blackwell (B200, GB200)"),
+        'mxfp8': (10.0, "Blackwell (RTX 50-series, B200, GB200)"),
         'fp16': (0.0, "Any CUDA device"),
         'fp32': (0.0, "Any CUDA device"),
     }

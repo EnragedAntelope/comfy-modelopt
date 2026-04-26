@@ -1,10 +1,25 @@
-# NVIDIA TensorRT Model Optimizer (ModelOpt) for ComfyUI: Complete Technical Guide
 
-## Executive Summary
+> **⚠️ OUTDATED**: This technical guide was written for ModelOpt v0.27-v0.33 (November 2025). ModelOpt is now at v0.43 (April 2026) with significant changes. **The project has been rewritten (v0.5.0) to use native PyTorch quantization with real quantized weights instead of ModelOpt fake quantization.** See RESEARCH_NOTES.md for the rewrite details and updated information.
+>
+# NVIDIA Model Optimizer (ModelOpt) for ComfyUI: Complete Technical Guide
 
-NVIDIA TensorRT Model Optimizer (ModelOpt) v0.27.0-v0.33 is an open-source model compression library with **limited support for diffusion models**. While it provides excellent INT8 quantization for SDXL and SD1.5 via NeMo integration, **FLUX, Qwen Image, and WAN 2.2 are NOT officially supported**. The library primarily focuses on LLM optimization with FP8, INT8, INT4, and NVFP4 quantization formats. For ComfyUI integration, you'll need custom loader nodes following V3 schema patterns with robust validation and error handling.
+## Executive Summary (Updated April 2026)
 
-## 1. ModelOpt Current Capabilities (November 2025)
+NVIDIA Model Optimizer (ModelOpt, formerly TensorRT Model Optimizer) v0.43 is now **open source under Apache 2.0** with **extensive diffusion model support** including FLUX.1, SD3.5, SDXL, SD1.5, LTX-2, and Wan2.2. The library supports FP8, INT8 SmoothQuant, INT4 AWQ, W4A8, and NVFP4 quantization formats. For ComfyUI integration, the native PyTorch path remains blocked by compatibility issues, but **three viable alternatives now exist**: Diffusers wrapper, TensorRT export, and pre-quantized checkpoint distribution.
+
+## 1. ModelOpt Current Capabilities (April 2026 — Updated from November 2025)
+
+### Supported Model Architectures
+
+**Diffusion Models (Extensive Support — Updated):**
+- **SDXL**: ✅ FP8, INT8, INT4 AWQ, W4A8, NVFP4, Cache Diffusion
+- **SD1.5**: ✅ FP8, INT8, INT4 AWQ, W4A8, NVFP4
+- **SD 2.1**: ✅ FP8, INT8, INT4 AWQ, W4A8, NVFP4
+- **FLUX.1-dev**: ✅ FP8, INT8, INT4 AWQ, W4A8, NVFP4 (NEW — was ❌)
+- **FLUX.1-schnell**: ✅ FP8, INT8, INT4 AWQ, W4A8, NVFP4 (NEW — was ❌)
+- **SD 3.5**: ✅ FP8, INT8, INT4 AWQ, W4A8, NVFP4, Cache Diffusion (NEW)
+- **LTX-2**: ✅ FP8, INT8, INT4 AWQ, W4A8, NVFP4, Cache Diffusion (NEW)
+- **Wan 2.2 (T2V)**: ✅ FP8, INT8, INT4 AWQ, W4A8, NVFP4, Cache Diffusion (NEW)
 
 ### Supported Model Architectures
 
