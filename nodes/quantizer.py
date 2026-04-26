@@ -496,6 +496,9 @@ class ModelOptSaveQuantized:
             import traceback
             traceback.print_exc()
             raise RuntimeError(f"Save failed: {e}")
+        
+        # OUTPUT_NODE with no outputs - return empty tuple
+        return ()
 
 class ModelOptCalibrationHelper:
     """
