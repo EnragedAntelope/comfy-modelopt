@@ -1,9 +1,21 @@
 # Windows-specific requirements
 # Install this after requirements.txt for Windows systems
+#
+# NOTE: For RTX 50-series (Blackwell) GPUs, use CUDA 12.8:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+#
+# For older GPUs (RTX 40-series and below), CUDA 12.6 works:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# Triton for Windows (experimental, for accelerated quantization)
-# triton-windows>=2.0.0
+# Triton for Windows (optional but recommended for faster quantization)
+# Install from PyPI (community-maintained Windows wheels):
+#   pip install triton-windows
+# Or from WildMinder's GitHub for latest builds:
+#   https://github.com/wildminds/triton-windows
+triton-windows>=3.6.0
 
-# Note: As of 2025, triton-windows is experimental
-# ModelOpt will work without it, just slower for quantization
-# ONNX Runtime is recommended for Windows deployment
+# Ninja is required by ModelOpt to compile C++ extensions:
+ninja>=1.11.0
+
+# ONNX Runtime for Windows deployment
+onnxruntime-gpu>=1.22.0

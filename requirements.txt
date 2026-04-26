@@ -1,11 +1,15 @@
 # Core Dependencies - Cross-platform compatible
 # Install PyTorch separately based on your platform and CUDA version:
+#   Linux/Windows with CUDA 12.8: pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   Linux/Windows with CUDA 12.6: pip install torch --index-url https://download.pytorch.org/whl/cu126
 #   Linux/Windows with CUDA 12.4: pip install torch --index-url https://download.pytorch.org/whl/cu124
-#   Linux/Windows with CUDA 12.1: pip install torch --index-url https://download.pytorch.org/whl/cu121
 #   macOS: pip install torch
+#
+# NOTE: PyTorch 2.6+ is required for ModelOpt 0.43+
+# NOTE: CUDA 12.8+ recommended for Blackwell (RTX 50-series) GPUs
 
 # NVIDIA ModelOpt (requires PyTorch to be installed first)
-nvidia-modelopt[all]>=0.27.0
+nvidia-modelopt[all]>=0.43.0
 
 # Model handling
 safetensors>=0.3.0
