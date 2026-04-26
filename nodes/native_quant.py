@@ -615,6 +615,11 @@ class QuantizedConv2d(nn.Module):
         self.register_buffer('block_scale', None)
         self.register_buffer('tensor_scale', None)
         
+        # SVD outlier absorption buffers (optional, for consistency with QuantizedLinear)
+        self.register_buffer('use_svd', torch.tensor(False))
+        self.register_buffer('svd_u', None)
+        self.register_buffer('svd_s', None)
+        self.register_buffer('svd_v', None)
         self.register_buffer('weight_q', None)
         if bias:
             self.register_buffer('bias', None)
@@ -625,7 +630,10 @@ class QuantizedConv2d(nn.Module):
                              weight_scale: Optional[torch.Tensor] = None,
                              input_scale: Optional[torch.Tensor] = None,
                              block_scale: Optional[torch.Tensor] = None,
-                             tensor_scale: Optional[torch.Tensor] = None):
+                             tensor_scale: Optional[torch.Tensor] = None,
+                             svd_u: Optional[torch.Tensor] = None,
+                             svd_s: Optional[torch.Tensor] = None,
+                             svd_v: Optional[torch.Tensor] = None):
         """Set quantized weight and scales."""
         self.weight_q = weight_q
         if weight_scale is not None:
@@ -636,7 +644,13 @@ class QuantizedConv2d(nn.Module):
             self.block_scale = block_scale
         if tensor_scale is not None:
             self.tensor_scale = tensor_scale
-    
+        if svd_u is not None:
+            self.svd_u = svd_u
+            self.use_svd = torch.tensor(True)
+        if svd_s is not None:
+            self.svd_s = svd_s
+        if svd_v is not None:
+            self.svd_v = svd_v
     def get_dequantized_weight(self, dtype: torch.dtype = torch.float16) -> torch.Tensor:
         if self.weight_q is None:
             raise RuntimeError("Quantized weight not set")

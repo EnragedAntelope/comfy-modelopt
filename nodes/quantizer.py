@@ -142,7 +142,11 @@ class ModelOptQuantizeUNet:
             print(f"  Y dimension: {model_info['y_dim']}")
             print(f"  Context dimension: {model_info['context_dim']}")
             print(f"  Has y param: {model_info['has_y_param']}")
-
+            
+            # Capture original model size BEFORE quantization (for accurate compression ratio)
+            original_params = sum(p.numel() for p in diffusion_model.parameters())
+            original_bytes = original_params * 2  # Assume FP16 original
+            print(f"  Original parameters: {original_params:,} ({format_bytes(original_bytes)} @ FP16)")
             # Parse skip layers
             skip_layer_list = []
             if skip_layers:
@@ -363,8 +367,9 @@ class ModelOptQuantizeUNet:
                 'calibration_steps': calibration_steps,
                 'architecture': model_info,
                 'quantization_metadata': quant_metadata,
+                'original_params': original_params,
+                'original_bytes': original_bytes,  # FP16 assumption
             }
-
             return (quantized_comfy_model,)
 
         except Exception as e:
@@ -482,12 +487,10 @@ class ModelOptSaveQuantized:
             file_size = os.path.getsize(save_path)
             print(f"  Saved! Size: {format_bytes(file_size)}")
             
-            # Print compression info
-            orig_size = sum(p.numel() * 2 for p in diffusion_model.parameters() if hasattr(p, 'numel'))  # Assume FP16 original
+            # Print compression info using ORIGINAL size captured before quantization
+            orig_size = metadata.get('original_bytes', file_size)  # Fallback to file_size if not stored
             print(f"  Original est. size: {format_bytes(orig_size)}")
             print(f"  Compression: {orig_size / file_size:.1f}x")
-            
-            return {}
             
         except Exception as e:
             import traceback
