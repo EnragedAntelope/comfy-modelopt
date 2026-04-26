@@ -1,14 +1,9 @@
-# Core Dependencies - Cross-platform compatible
-# Install PyTorch separately based on your platform and CUDA version:
-#   Linux/Windows with CUDA 12.8: pip install torch --index-url https://download.pytorch.org/whl/cu128
-#   Linux/Windows with CUDA 12.6: pip install torch --index-url https://download.pytorch.org/whl/cu126
-#   Linux/Windows with CUDA 12.4: pip install torch --index-url https://download.pytorch.org/whl/cu124
-#   macOS: pip install torch
+# comfy-modelopt - Core Dependencies
 #
-# NOTE: PyTorch 2.6+ is required for ModelOpt 0.43+
-# NOTE: CUDA 12.8+ recommended for Blackwell (RTX 50-series) GPUs
+# This package runs as a ComfyUI custom node. PyTorch is expected to be
+# provided by the ComfyUI environment — do NOT install a conflicting one.
 
-# NVIDIA ModelOpt (requires PyTorch to be installed first)
+# NVIDIA ModelOpt (calibration engine) — builds C++ extensions at install time
 nvidia-modelopt[all]>=0.43.0
 
 # Model handling
@@ -19,10 +14,18 @@ accelerate>=0.20.0
 transformers>=4.30.0
 diffusers>=0.20.0
 
-# Optional but useful
+# Optional
 onnx>=1.14.0
 onnxruntime>=1.15.0
 
-# Note: Triton is installed automatically with ModelOpt on supported platforms
-# For Windows, use: pip install -r requirements-windows.txt
-# For Linux, use: pip install -r requirements-linux.txt (if needed)
+# ─── Platform Notes ──────────────────────────────────────────
+# Windows: pip install -r requirements-windows.txt
+#   (includes triton-windows, ninja, onnxruntime-gpu)
+#
+# ─── Known setuptools conflict (cosmetic only) ──────────────
+# nvidia-modelopt requires setuptools>=80 (build time).
+# PyTorch may pin setuptools<82 (pip-installed dependency).
+#
+# If pip warns about this, ignore it — modelopt works fine
+# at runtime regardless. The conflict does NOT affect ComfyUI
+# or any modelopt functionality.

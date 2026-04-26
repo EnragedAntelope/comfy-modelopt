@@ -3,7 +3,7 @@ name = "comfy-modelopt"
 version = "0.6.0"
 description = "NVIDIA ModelOpt integration for ComfyUI - Native quantization with real weights (INT8/FP8/MXFP8/INT4/NVFP4)"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.14"
 license = {text = "MIT"}
 authors = [
     {name = "enragedantelope"}
@@ -11,7 +11,8 @@ authors = [
 keywords = ["comfyui", "nvidia", "modelopt", "tensorrt", "quantization", "stable-diffusion", "optimization"]
 
 dependencies = [
-    "torch>=2.6.0",
+    # PyTorch is provided by the ComfyUI environment.
+    # Do NOT add it here — it would conflict with ComfyUI's pinned version.
     "safetensors>=0.3.0",
     "accelerate>=0.20.0",
     "transformers>=4.30.0",
