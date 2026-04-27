@@ -52,11 +52,11 @@ class ModelOptUNetLoader:
         return {
             "required": {
                 "unet_name": (folder_paths.get_filename_list("modelopt_unet"), {
-                    "tooltip": "Select quantized UNet (v0.6.0+ standalone checkpoint)"
+                    "tooltip": "Quantized UNet checkpoint (.safetensors) from ModelOptSaveQuantized (v0.6.0+). Contains embedded architecture config for standalone loading. Place files in ComfyUI/models/modelopt_unet/"
                 }),
                 "enable_caching": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Cache loaded models for faster subsequent loads"
+                    "tooltip": "Keep quantized model cached in VRAM to skip re-loading on subsequent generations. Disable to free memory between uses."
                 }),
             }
         }
@@ -66,8 +66,10 @@ class ModelOptUNetLoader:
     FUNCTION = "load_unet"
     CATEGORY = "loaders/modelopt"
     DESCRIPTION = (
-        "Load native quantized UNet (standalone only, v0.6.0+). "
-        "No base_model required - checkpoint contains embedded architecture config."
+        "Load a quantized UNet standalone (v0.6.0+). No base model required - "
+        "the checkpoint contains embedded architecture config. "
+        "Connect output to KSampler for inference. "
+        "Place .safetensors files in ComfyUI/models/modelopt_unet/"
     )
 
     def load_unet(self, unet_name, enable_caching=True):

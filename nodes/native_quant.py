@@ -575,7 +575,11 @@ class QuantizedLinear(nn.Module):
         if self.use_svd.item():
             return self._forward_svd(input)
         weight = self.get_dequantized_weight(input.dtype)
-        return F.linear(input, weight, self.bias)
+        weight = weight.to(input.dtype)  # Defensive: ensure dtype matches input
+        bias = self.bias
+        if bias is not None and bias.dtype != input.dtype:
+            bias = bias.to(input.dtype)
+        return F.linear(input, weight, bias)
     
     def _forward_svd(self, input: torch.Tensor) -> torch.Tensor:
         """Forward pass with SVD outlier absorption."""
@@ -583,7 +587,11 @@ class QuantizedLinear(nn.Module):
         outlier = reconstruct_svd_outlier(input, self.svd_u, self.svd_s, self.svd_v)
         # Residual contribution
         residual_weight = self.get_dequantized_weight(input.dtype)
-        residual = F.linear(input, residual_weight, self.bias)
+        residual_weight = residual_weight.to(input.dtype)  # Defensive cast
+        bias = self.bias
+        if bias is not None and bias.dtype != input.dtype:
+            bias = bias.to(input.dtype)
+        residual = F.linear(input, residual_weight, bias)
         return outlier + residual
     
     def extra_repr(self) -> str:
@@ -681,7 +689,11 @@ class QuantizedConv2d(nn.Module):
     
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         weight = self.get_dequantized_weight(input.dtype)
-        return F.conv2d(input, weight, self.bias, self.stride, 
+        weight = weight.to(input.dtype)  # Defensive: ensure dtype matches input
+        bias = self.bias
+        if bias is not None and bias.dtype != input.dtype:
+            bias = bias.to(input.dtype)
+        return F.conv2d(input, weight, bias, self.stride,
                        self.padding, self.dilation, self.groups)
     
     def extra_repr(self) -> str:

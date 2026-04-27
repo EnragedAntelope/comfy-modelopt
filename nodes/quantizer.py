@@ -56,37 +56,38 @@ class ModelOptQuantizeUNet:
                 "precision": (["int8", "fp8", "int4", "nvfp4", "mxfp8"], {
                     "default": "mxfp8",
                     "tooltip": (
-                        "int8: Best compatibility, Turing+ GPUs\n"
-                        "fp8: Good quality/speed, Ada Lovelace+ (RTX 40-series+)\n"
-                        "mxfp8: Blockwise FP8, Blackwell (RTX 50-series) — RECOMMENDED\n"
-                        "int4: Maximum compression, experimental\n"
-                        "nvfp4: Native 4-bit float, Blackwell (RTX 50-series)"
+                        "int8: Best compatibility, Turing+ GPUs (RTX 20-series). ~50% size reduction.\n"
+                        "fp8: Good quality/speed, Ada Lovelace+ (RTX 40-series). ~50% size reduction.\n"
+                        "mxfp8: Blockwise FP8, Blackwell (RTX 50-series) — RECOMMENDED for RTX 5090. ~45% reduction.\n"
+                        "int4: Maximum compression, Ampere+ (RTX 30-series). ~75% reduction. Experimental.\n"
+                        "nvfp4: Native 4-bit float, Blackwell (RTX 50-series). ~75% reduction."
                     )
                 }),
                 "calibration_steps": ("INT", {
                     "default": 32,
                     "min": 8,
                     "max": 512,
-                    "step": 8,
+                    "tooltip": "Number of calibration steps. Higher = better quality but slower calibration. 32 is a good default for most models. 128+ for maximum quality."
                 }),
                 "algorithm": (["max", "mse", "awq_lite"], {
                     "default": "max",
                     "tooltip": (
-                        "max: Default, uses max absolute value for scale (fastest)\n"
-                        "mse: Minimizes mean squared error (better quality, slower)\n"
-                        "awq_lite: Activation-aware weight quantization (best quality, slowest)"
+                        "Calibration algorithm:\n"
+                        "max: Fastest, uses activation max values.\n"
+                        "mse: Better quality, minimizes mean-squared error (RECOMMENDED).\n"
+                        "awq_lite: Best quality, slowest. Uses activation-aware weighting."
                     )
                 }),
                 "use_svd": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Enable SVD outlier absorption for better 4-bit quality"
+                    "tooltip": "SVD outlier absorption: keep important weight dimensions in FP16 while quantizing the rest. Recommended for INT4/NVFP4 to improve output quality at maximum compression."
                 }),
                 "svd_ratio": ("FLOAT", {
                     "default": 0.01,
                     "min": 0.001,
                     "max": 0.1,
                     "step": 0.001,
-                    "tooltip": "Fraction of dimensions to keep as outliers (0.001-0.1)"
+                    "tooltip": "Fraction of singular values kept as high-precision outliers (0.001-0.1). Higher = better quality but larger file. Default 0.01 (1%)."
                 }),
             },
             "optional": {
