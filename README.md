@@ -141,7 +141,7 @@ For **INT4** and **NVFP4** quantization, enable `use_svd` in the **ModelOpt Quan
 
 ## Known Limitations
 
-- **Conv2d fallback**: MXFP8 and NVFP4 require 2D weight tensors. Conv2d layers automatically fall back to FP8 quantization when using these formats.
+- **Conv2d flat dim not divisible by 32/16**: MXFP8 requires 32-element blocks and NVFP4 requires 16-element blocks. Conv2d layers whose flattened weight dimension (`in_channels * kernel_H * kernel_W`) is not divisible by 32 (MXFP8) or 16 (NVFP4) fall back to FP8. Most SD1.5/SDXL layers are unaffected.
 - **SVD only for Linear layers**: SVD outlier absorption is only applied to 2D Linear weights, not Conv2d or 1D tensors.
 - **PyTorch cu130+**: For maximum speedup with `comfy_kitchen` acceleration, PyTorch with CUDA 13.0+ is recommended. Current stable wheels are cu128.
 - **torch.compile**: Not yet compatible with quantized models.
@@ -169,6 +169,8 @@ For **INT4** and **NVFP4** quantization, enable `use_svd` in the **ModelOpt Quan
 **"This checkpoint was saved without architecture metadata"**
 → This checkpoint was created with pre-v0.6.0 version. Re-quantize using the latest version to embed architecture config.
 
+**"self and mat2 must have the same dtype" or "'NoneType' object has no attribute 'to'"**
+→ Fixed in v0.7.3. Update to the latest version with `git pull`.
 
 ---
 ---
