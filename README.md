@@ -103,6 +103,23 @@ If you use ComfyUI Manager, click **"Install Custom Nodes"** and search for `com
 3. Add VAE and CLIP loaders as usual. Queue prompt.
 ---
 
+
+---
+
+## Sample Workflow
+
+> *(Drop a link to your sample workflow JSON here)*
+>
+> *(Drop a screenshot/sample output image here)*
+
+To try it out quickly:
+1. Download the sample workflow JSON (link above)
+2. Drag it into ComfyUI
+3. Select your quantized `.safetensors` file in the **ModelOpt UNet Loader**
+4. Queue prompt
+
+---
+
 ## Nodes Reference
 
 | Node | What It Does |
