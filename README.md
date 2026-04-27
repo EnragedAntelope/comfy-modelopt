@@ -135,10 +135,10 @@ For **INT4** and **NVFP4** quantization, enable `use_svd` in the **ModelOpt Quan
 ## Troubleshooting
 
 **"Model already has modelopt state!" when loading**
-→ This was a bug in v0.4.0. Fixed in the latest version. Update or restart ComfyUI.
+→ Restart ComfyUI. This can occur if a previous session crashed mid-quantization.
 
 **"mat1 and mat2 must have the same dtype"**
-→ Fixed in the latest version. The model now restores to its original FP16 dtype after quantization.
+→ Ensure all models are using consistent precision (FP16 recommended for SD1.5/SDXL).
 
 **"Invalid version format in requirements.txt: 2.0" on startup**
 → This is a harmless warning from ComfyUI's own requirements parser, not from this custom node. Safe to ignore.
@@ -149,6 +149,11 @@ For **INT4** and **NVFP4** quantization, enable `use_svd` in the **ModelOpt Quan
 **No speedup during inference**
 → Without `comfy_kitchen` installed, dequantization happens on-the-fly in PyTorch. For native CUDA acceleration, ensure PyTorch cu130+ and `comfy_kitchen` are installed.
 
+**"This checkpoint was saved without architecture metadata"**
+→ This checkpoint was created with pre-v0.6.0 version. Re-quantize using the latest version to embed architecture config.
+
+
+---
 ---
 
 ## How It Works (Short Version)
