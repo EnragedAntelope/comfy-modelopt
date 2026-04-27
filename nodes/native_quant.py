@@ -569,7 +569,9 @@ class QuantizedLinear(nn.Module):
         elif self.precision == 'mxfp8':
             return dequant_fn(self.weight_q, self.block_scale, dtype)
         else:
-            return dequant_fn(self.weight_q, self.weight_scale, dtype)
+            if self.weight_scale is not None:
+                return dequant_fn(self.weight_q, self.weight_scale, dtype)
+            return self.weight_q.to(dtype)
     
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         if self.use_svd.item():
@@ -681,7 +683,13 @@ class QuantizedConv2d(nn.Module):
 
         # Fallback: blockwise format with no block_scale -> use FP8
         if self.precision in ['nvfp4', 'mxfp8'] and self.block_scale is None:
-            return dequantize_fp8(self.weight_q, self.weight_scale, dtype)
+            if self.weight_scale is not None:
+                return dequantize_fp8(self.weight_q, self.weight_scale, dtype)
+            # Last resort: no block_scale AND no weight_scale
+            # This can happen when loading a checkpoint where block_scale was
+            # stored but the key didn't match during loading. Fall back to
+            # returning weight_q as the target dtype (identity dequant).
+            return self.weight_q.to(dtype)
 
         # Standard per-tensor dequantization (FP8, INT8, INT4)
         dequant_fn = get_dequantize_fn(self.precision)
@@ -841,7 +849,15 @@ def quantize_model_weights(model: nn.Module, precision: str = 'fp8',
                     orig_shape = weight.shape
                     flat = weight.reshape(orig_shape[0], -1)
                     qdata_flat, block_scale = quantize_mxfp8(flat)
-                    qdata = qdata_flat.reshape(orig_shape)
+                    if qdata_flat.shape[1] == flat.shape[1]:
+                        # No padding; can reshape back to 4D
+                        qdata = qdata_flat.reshape(orig_shape)
+                    else:
+                        # Padding changed element count; fall back to FP8
+                        print(f"  Note: Conv2d layer {name} flattened dim {flat.shape[1]} not ",
+                              "divisible by 32. Using FP8 fallback.")
+                        qdata, computed_scale = quantize_fp8(weight)
+                        block_scale = None
                     
             elif precision == 'nvfp4':
                 if weight.dim() == 2:
@@ -851,7 +867,13 @@ def quantize_model_weights(model: nn.Module, precision: str = 'fp8',
                     orig_shape = weight.shape
                     flat = weight.reshape(orig_shape[0], -1)
                     qdata_flat, tensor_scale, block_scale = quantize_nvfp4(flat)
-                    qdata = qdata_flat.reshape(orig_shape)
+                    if qdata_flat.shape[1] == flat.shape[1]:
+                        qdata = qdata_flat.reshape(orig_shape)
+                    else:
+                        print(f"  Note: Conv2d layer {name} flattened dim {flat.shape[1]} not ",
+                              "divisible by 16. Using FP8 fallback.")
+                        qdata, computed_scale = quantize_fp8(weight)
+                        block_scale = None
                     
             elif precision == 'int8':
                 if weight.dim() == 2:

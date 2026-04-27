@@ -337,10 +337,15 @@ class ModelOptUNetLoader:
             if bias is not None:
                 new_layer.bias = bias
 
-            new_layer.weight_scale = weight_scale
-            new_layer.input_scale = input_scale
-            new_layer.block_scale = block_scale
-            new_layer.tensor_scale = tensor_scale
+            # Set quantized weight and scales (only if present in state_dict)
+            if weight_scale is not None:
+                new_layer.weight_scale = weight_scale
+            if input_scale is not None:
+                new_layer.input_scale = input_scale
+            if block_scale is not None:
+                new_layer.block_scale = block_scale
+            if tensor_scale is not None:
+                new_layer.tensor_scale = tensor_scale
 
             # Load SVD buffers if present
             svd_u = q_state_dict.get(f"{name}.svd_u")
