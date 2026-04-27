@@ -25,6 +25,7 @@ from .utils import (
     check_precision_compatibility,
     format_bytes,
     introspect_diffusion_model,
+    count_model_storage,
 )
 
 from .native_quant import (
@@ -317,10 +318,18 @@ class ModelOptQuantizeUNet:
                 forward_loop
             )
 
-            # Extract scales from ModelOpt quantizers
+            # Extract scales from ModelOpt quantizers BEFORE stripping
             print("\nExtracting calibration scales from ModelOpt...")
             scales = extract_modelopt_scales(calibrated_model)
             print(f"  Extracted scales for {len(scales)} layers")
+
+            # Strip ModelOpt quantizers BEFORE native quantization
+            print("  Stripping ModelOpt quantizers...")
+            removed = strip_modelopt_quantizers(calibrated_model)
+            if removed > 0:
+                print(f"  Removed {removed} ModelOpt quantizer submodules")
+            else:
+                print("  No ModelOpt quantizers found (already stripped or none present)")
 
             # Apply native quantization
             print(f"\nApplying native {precision.upper()} quantization...")
@@ -332,11 +341,8 @@ class ModelOptQuantizeUNet:
                 svd_ratio=svd_ratio
             )
 
-            # Strip ModelOpt state
-            print("  Stripping ModelOpt quantizers...")
-            removed = strip_modelopt_quantizers(quantized_model)
+            # Strip ModelOpt state (handles root-level state after quantization)
             strip_modelopt_state(quantized_model)
-            print(f"  Removed {removed} ModelOpt quantizer submodules")
 
             # Restore original dtype
             if original_dtype != torch.float32:
@@ -350,10 +356,10 @@ class ModelOptQuantizeUNet:
             print(f"  Layers quantized: {quant_metadata['quantized_count']}")
             print(f"  Layers skipped: {quant_metadata['skipped_count']}")
             
-            total_params = sum(p.numel() for p in quantized_model.parameters())
-            total_bytes = sum(p.numel() * p.element_size() for p in quantized_model.parameters())
-            print(f"  Total parameters: {total_params:,}")
-            print(f"  Model size: {format_bytes(total_bytes)}")
+            storage_info = count_model_storage(quantized_model)
+            print(f"  Parameters:   {storage_info['param_elements']:,} ({format_bytes(storage_info['param_bytes'])})")
+            print(f"  Buffers:      {storage_info['buffer_elements']:,} ({format_bytes(storage_info['buffer_bytes'])})")
+            print(f"  Total params: {storage_info['total_elements']:,} ({format_bytes(storage_info['total_bytes'])})")
             print(f"{'='*60}\n")
 
             # Replace model in ComfyUI structure

@@ -236,6 +236,74 @@ def get_model_size_estimate(num_parameters, precision='fp16'):
     return format_bytes(total_bytes)
 
 
+
+def count_model_storage(model: torch.nn.Module) -> dict:
+    """
+    Count actual storage (parameters + buffers) in a model.
+    
+    This is CRITICAL for quantized models because QuantizedLinear stores
+    quantized weights as buffers (register_buffer), NOT as nn.Parameter.
+    model.parameters() would miss them, giving catastrophically wrong results
+    (e.g., 200K instead of 860M).
+    
+    Args:
+        model: PyTorch model to analyze
+    
+    Returns:
+        dict: {
+            'total_elements': int,  # Total tensor elements
+            'total_bytes': int,  # Total bytes in memory
+            'param_elements': int,  # Elements from nn.Parameter
+            'param_bytes': int,
+            'buffer_elements': int,  # Elements from buffers
+            'buffer_bytes': int,
+            'breakdown_by_precision': {dtype_str: {'elements': int, 'bytes': int}}
+        }
+    """
+    result = {
+        'total_elements': 0,
+        'total_bytes': 0,
+        'param_elements': 0,
+        'param_bytes': 0,
+        'buffer_elements': 0,
+        'buffer_bytes': 0,
+        'breakdown_by_precision': {},
+    }
+    
+    def _count_tensor(tensor: torch.Tensor, is_param: bool):
+        """Count a single tensor's contribution."""
+        if tensor is None:
+            return
+        elements = tensor.numel()
+        bytes_val = elements * tensor.element_size()
+        dtype_str = str(tensor.dtype)
+        
+        result['total_elements'] += elements
+        result['total_bytes'] += bytes_val
+        
+        if is_param:
+            result['param_elements'] += elements
+            result['param_bytes'] += bytes_val
+        else:
+            result['buffer_elements'] += elements
+            result['buffer_bytes'] += bytes_val
+        
+        if dtype_str not in result['breakdown_by_precision']:
+            result['breakdown_by_precision'][dtype_str] = {'elements': 0, 'bytes': 0}
+        result['breakdown_by_precision'][dtype_str]['elements'] += elements
+        result['breakdown_by_precision'][dtype_str]['bytes'] += bytes_val
+    
+    # Count parameters
+    for name, param in model.named_parameters():
+        _count_tensor(param, is_param=True)
+    
+    # Count buffers (including registered buffers like weight_q, weight_scale, etc.)
+    for name, buffer in model.named_buffers():
+        _count_tensor(buffer, is_param=False)
+    
+    return result
+
+
 def scan_model_directory(base_path, extensions):
     """
     Recursively scan directory for models with specific extensions.

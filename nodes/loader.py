@@ -3,15 +3,12 @@ ModelOpt Native Quantized UNet Loader for ComfyUI
 
 Loads quantized UNet models saved with native quantization.
 
-Two loading paths:
-  1. **Standalone** (no base_model required): Reconstruct model from
-     architecture metadata stored in the .safetensors file.
-  2. **Overlay** (base_model required): Clone base model, replace layers
-     with quantized versions. For checkpoints saved without config metadata.
+Standalone loading only (v0.6.0+).
 
-The standalone path is the primary mode for new checkpoints saved by
-ModelOptSaveQuantized (v0.6.0+). It eliminates the need to keep the
-original model checkpoint after quantization.
+Reconstructs UNet from architecture metadata stored in the .safetensors file.
+No base model checkpoint required - the quantized file is self-contained.
+
+To use: quantize with ModelOptSaveQuantized (v0.6.0+) to embed architecture config.
 """
 
 import os
@@ -37,15 +34,7 @@ from .quant_saveload import load_quantized_model, reconstruct_base_model
 
 
 class ModelOptUNetLoader:
-    """
-    Load a UNet/diffusion model quantized with native quantization.
-
-    Two loading modes:
-    - **Standalone**: If the .safetensors file contains model config metadata
-      (saved by ModelOptSaveQuantized v0.6.0+), no base_model is needed.
-    - **Overlay**: If no config metadata exists, base_model is required for
-      architecture reconstruction (legacy checkpoints).
-    """
+    """Standalone loading only (v0.6.0+). No base_model required."""
 
     _model_cache = {}
 
@@ -63,20 +52,11 @@ class ModelOptUNetLoader:
         return {
             "required": {
                 "unet_name": (folder_paths.get_filename_list("modelopt_unet"), {
-                    "tooltip": "Select a quantized UNet model from models/modelopt_unet/"
-                }),
-            },
-            "optional": {
-                "base_model": ("MODEL", {
-                    "tooltip": (
-                        "OPTIONAL: Original unquantized model for overlay mode. "
-                        "Not needed for checkpoints saved with v0.6.0+ "
-                        "(standalone mode)"
-                    )
+                    "tooltip": "Select quantized UNet (v0.6.0+ standalone checkpoint)"
                 }),
                 "enable_caching": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Cache loaded models in memory to speed up subsequent loads"
+                    "tooltip": "Cache loaded models for faster subsequent loads"
                 }),
             }
         }
@@ -86,13 +66,12 @@ class ModelOptUNetLoader:
     FUNCTION = "load_unet"
     CATEGORY = "loaders/modelopt"
     DESCRIPTION = (
-        "Load native quantized UNet. If the safetensors file has embedded "
-        "architecture config (v0.6.0+), loads standalone without base_model. "
-        "Otherwise, overlays quantized weights onto the provided base_model."
+        "Load native quantized UNet (standalone only, v0.6.0+). "
+        "No base_model required - checkpoint contains embedded architecture config."
     )
 
-    def load_unet(self, unet_name, base_model=None, enable_caching=True):
-        """Load native quantized UNet - standalone or overlay mode."""
+    def load_unet(self, unet_name, enable_caching=True):
+        """Load native quantized UNet - standalone mode only."""
 
         gpu_info = get_gpu_info()
         if not gpu_info["available"]:
@@ -145,31 +124,17 @@ class ModelOptUNetLoader:
                 and 'unet_config' in model_config
             )
 
-            if has_standalone_config and base_model is None:
-                # --- PATH 1: Standalone reconstruction ---
+            if has_standalone_config:
+                # --- STANDALONE reconstruction ---
                 print("  Mode: STANDALONE (reconstructing from stored config)")
                 model_patcher = self._load_standalone(
                     q_state_dict, metadata, model_config, unet_name, precision, device
                 )
-
-            elif base_model is not None:
-                # --- PATH 2: Overlay onto base model ---
-                print("  Mode: OVERLAY (onto provided base_model)")
-                model_patcher = self._load_overlay(
-                    base_model, q_state_dict, metadata, precision
-                )
-
             else:
-                # --- No config AND no base_model ---
                 raise RuntimeError(
-                    "Cannot load quantized model.\n\n"
-                    "This checkpoint was saved without architecture metadata "
-                    "(pre-v0.6.0). To load it:\n"
-                    "1. Connect a Checkpoint Loader node to 'base_model' input\n"
-                    "2. The base model must use the same architecture as when "
-                    "quantized\n\n"
-                    "To avoid this in the future, re-quantize and save with "
-                    "ModelOptSaveQuantized (v0.6.0+) to embed architecture config."
+                    "This checkpoint was saved without architecture metadata (pre-v0.6.0).\n\n"
+                    "Please re-quantize and save with ModelOptSaveQuantized (v0.6.0+) "
+                    "to embed architecture config."
                 )
 
             # Cache if enabled
@@ -282,39 +247,9 @@ class ModelOptUNetLoader:
         return model_patcher
 
     # ------------------------------------------------------------------
-    # PATH 2: Overlay onto base model
+    # REMOVED: _load_overlay() method - standalone loading only (v0.6.0+)
+    # This method is deprecated and no longer used.
     # ------------------------------------------------------------------
-
-    def _load_overlay(self, base_model, q_state_dict, metadata, precision):
-        """Clone base model and overlay quantized weights."""
-        print("  Cloning base model...")
-        quantized_model = base_model.clone()
-        diffusion_model = quantized_model.model.diffusion_model
-
-        print("  Applying quantized weights...")
-        self._apply_quantized_weights(diffusion_model, q_state_dict, precision)
-
-        # Verify quantization was applied
-        quantized_count = sum(
-            1 for m in diffusion_model.modules()
-            if isinstance(m, (QuantizedLinear, QuantizedConv2d))
-        )
-        if quantized_count == 0:
-            raise RuntimeError(
-                "No quantized layers found after loading!\n\n"
-                "This may indicate:\n"
-                "\u2022 The saved model was not properly quantized\n"
-                "\u2022 Architecture mismatch between base model and saved model\n"
-                "\u2022 Corrupted saved model file\n\n"
-                "Please ensure:\n"
-                "1. The base_model has the same architecture as when quantized\n"
-                "2. The saved file was created with ModelOptSaveQuantized node\n"
-                "3. The saved file is not corrupted"
-            )
-
-        print(f"  Quantized layers: {quantized_count}")
-        return quantized_model
-
     # ------------------------------------------------------------------
     # Quantized weight application (shared by both paths)
     # ------------------------------------------------------------------

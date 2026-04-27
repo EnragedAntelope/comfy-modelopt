@@ -655,11 +655,16 @@ class QuantizedConv2d(nn.Module):
         if self.weight_q is None:
             raise RuntimeError("Quantized weight not set")
 
-        # Blockwise formats (MXFP8/NVFP4) need flattening for Conv2d weights
+        # Blockwise formats (MXFP8/NVFP4) need proper flattening for Conv2d weights
         if self.precision in ['nvfp4', 'mxfp8'] and self.block_scale is not None:
             dequant_fn = get_dequantize_fn(self.precision)
             orig_shape = self.weight_q.shape
-            flat = self.weight_q.reshape(-1, orig_shape[-1])
+            # Conv2d (4D+): flatten consistently with quantize_model_weights
+            # i.e., [out_ch, in_ch, kH, kW] -> [out_ch, in_ch*kH*kW]
+            if len(orig_shape) > 2:
+                flat = self.weight_q.reshape(orig_shape[0], -1)
+            else:
+                flat = self.weight_q.reshape(-1, orig_shape[-1])
             if self.precision == 'nvfp4':
                 dequant = dequant_fn(flat, self.tensor_scale, self.block_scale, dtype)
             else:
@@ -820,20 +825,21 @@ def quantize_model_weights(model: nn.Module, precision: str = 'fp8',
                 if weight.dim() == 2:
                     qdata, block_scale = quantize_mxfp8(weight)
                 else:
-                    # Conv2d weights: fall back to FP8 since MXFP8 requires 2D
-                    print(f"  Note: Falling back to FP8 for Conv2d layer {name} (MXFP8 requires 2D)")
-                    qdata, computed_scale = quantize_fp8(weight)
-                    block_scale = None  # FP8 uses weight_scale instead
+                    # Conv2d: flatten to 2D, quantize with MXFP8 block quantization
+                    orig_shape = weight.shape
+                    flat = weight.reshape(orig_shape[0], -1)
+                    qdata_flat, block_scale = quantize_mxfp8(flat)
+                    qdata = qdata_flat.reshape(orig_shape)
                     
             elif precision == 'nvfp4':
                 if weight.dim() == 2:
                     qdata, tensor_scale, block_scale = quantize_nvfp4(weight)
                 else:
-                    # Conv2d weights: fall back to FP8 since NVFP4 requires 2D
-                    print(f"  Note: Falling back to FP8 for Conv2d layer {name} (NVFP4 requires 2D)")
-                    qdata, computed_scale = quantize_fp8(weight)
-                    tensor_scale = None
-                    block_scale = None  # FP8 uses weight_scale instead
+                    # Conv2d: flatten to 2D, quantize with NVFP4 block quantization
+                    orig_shape = weight.shape
+                    flat = weight.reshape(orig_shape[0], -1)
+                    qdata_flat, tensor_scale, block_scale = quantize_nvfp4(flat)
+                    qdata = qdata_flat.reshape(orig_shape)
                     
             elif precision == 'int8':
                 if weight.dim() == 2:

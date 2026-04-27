@@ -96,14 +96,11 @@ If you use ComfyUI Manager, click **"Install Custom Nodes"** and search for `com
 
 ### Load and Generate
 
-1. Add a **Checkpoint Loader** with the **original unquantized model**
-2. Connect it to **ModelOpt UNet Loader**
+1. Add a **ModelOpt UNet Loader** node
    - Select the saved `.safetensors` file from the dropdown
-3. Connect **ModelOpt UNet Loader** output to a **KSampler**
-4. Add VAE and CLIP loaders as usual. Queue prompt.
-
-> **Note**: The loader overlays quantized weights onto the base model. The base model provides the architecture; the `.safetensors` file provides the quantized weights. Both are needed for loading.
-
+   - No base model needed - the checkpoint is self-contained (v0.6.0+)
+2. Connect **ModelOpt UNet Loader** output to a **KSampler**
+3. Add VAE and CLIP loaders as usual. Queue prompt.
 ---
 
 ## Nodes Reference
@@ -112,7 +109,7 @@ If you use ComfyUI Manager, click **"Install Custom Nodes"** and search for `com
 |------|-------------|
 | **ModelOpt Quantize UNet** | Quantizes the UNet portion of a loaded model using real native quantization |
 | **ModelOpt Save Quantized** | Saves the quantized UNet as a self-contained `.safetensors` file |
-| **ModelOpt UNet Loader** | Loads a saved quantized UNet by overlaying quantized weights onto a base model |
+| **ModelOpt UNet Loader** | Loads a saved quantized UNet standalone (v0.6.0+). No base model required - architecture config is embedded in the checkpoint |
 | **ModelOpt Calibration Helper** | (Optional) Collect latent samples for better calibration data |
 
 ### SVD Outlier Absorption
@@ -161,7 +158,7 @@ For **INT4** and **NVFP4** quantization, enable `use_svd` in the **ModelOpt Quan
 3. **Native quantization**: We replace layer weights with real quantized storage (FP8/INT8/MXFP8/etc.) using PyTorch operations.
 4. **ModelOpt cleanup**: All ModelOpt quantizer submodules are stripped, leaving only native quantized weights.
 5. **Save**: The model's state_dict (with quantized weights) is saved as `.safetensors` with metadata.
-6. **Load**: The loader overlays quantized weights from the `.safetensors` file onto a fresh base model.
+6. **Load**: The loader reconstructs the model from embedded architecture config and applies quantized weights. No base model checkpoint needed.
 
 This approach produces **real quantized checkpoints** (50-75% smaller) that are **self-contained** and **compatible with ComfyUI's execution pipeline**.
 
