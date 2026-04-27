@@ -106,18 +106,12 @@ If you use ComfyUI Manager, click **"Install Custom Nodes"** and search for `com
 
 ---
 
-## Sample Workflow
+## Usage Examples
+<img width="2606" height="642" alt="image" src="https://github.com/user-attachments/assets/0186a2dd-6d56-491f-9fa4-105c8449f297" />
+_Example Quantize_
 
-> *(Drop a link to your sample workflow JSON here)*
->
-> *(Drop a screenshot/sample output image here)*
-
-To try it out quickly:
-1. Download the sample workflow JSON (link above)
-2. Drag it into ComfyUI
-3. Select your quantized `.safetensors` file in the **ModelOpt UNet Loader**
-4. Queue prompt
-
+<img width="2220" height="1211" alt="image" src="https://github.com/user-attachments/assets/4c0016f5-a4c3-49b2-8980-70afd7e1e0f4" />
+_Example Inference_
 ---
 
 ## Nodes Reference
