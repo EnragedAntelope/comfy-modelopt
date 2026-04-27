@@ -108,10 +108,11 @@ If you use ComfyUI Manager, click **"Install Custom Nodes"** and search for `com
 
 ## Usage Examples
 <img width="2606" height="642" alt="image" src="https://github.com/user-attachments/assets/0186a2dd-6d56-491f-9fa4-105c8449f297" />
-_Example Quantize_
+Example Quantize
 
 <img width="2220" height="1211" alt="image" src="https://github.com/user-attachments/assets/4c0016f5-a4c3-49b2-8980-70afd7e1e0f4" />
-_Example Inference_
+Example Inference
+
 ---
 
 ## Nodes Reference
